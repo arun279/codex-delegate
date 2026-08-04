@@ -14,9 +14,10 @@ HOOKS=$ROOT/hooks/hooks.json
 GATE=$ROOT/scripts/gate.sh
 LEFTHOOK=$ROOT/lefthook.yml
 CI=$ROOT/.github/workflows/ci.yml
-TMP_BASE=${TMPDIR:-/tmp}
-WORK=$(mktemp -d "${TMP_BASE%/}/codex-delegate-contract.XXXXXX") || exit 2
-trap 'rm -rf -- "$WORK"' EXIT INT TERM HUP
+. "$ROOT/scripts/test-temp.sh"
+test_temp_create "$ROOT" contract || exit 2
+WORK=$CODEX_DELEGATE_TEST_TMP_WORK
+test_temp_install_traps
 
 PASS=0
 FAIL=0

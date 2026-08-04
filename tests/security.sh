@@ -7,13 +7,13 @@ BIN=$ROOT/bin/codex-delegate
 PERMISSION_HOOK=$ROOT/hooks/permission-allow.py
 PRIVACY=$ROOT/PRIVACY.md
 SECURITY=$ROOT/SECURITY.md
-TMP_BASE=${TMPDIR:-/tmp}
-WORK=$(mktemp -d "${TMP_BASE%/}/codex-delegate-security.XXXXXX") || {
+. "$ROOT/scripts/test-temp.sh"
+test_temp_create "$ROOT" security || {
   echo "security: temporary directory creation failed" >&2
   exit 2
 }
-WORK=$(cd -- "$WORK" && pwd -P) || exit 2
-trap 'rm -rf -- "$WORK"' EXIT INT TERM HUP
+WORK=$CODEX_DELEGATE_TEST_TMP_WORK
+test_temp_install_traps
 
 mkdir -p "$WORK/home" "$WORK/runs" "$WORK/job" "$WORK/extra" || exit 2
 printf 'security prompt\n' >"$WORK/prompt.txt"
