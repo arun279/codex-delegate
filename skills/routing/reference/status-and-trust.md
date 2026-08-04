@@ -1,7 +1,6 @@
 # Status and trust boundaries
 
-The blocking runner prints the final-message section before status. The same JSON is stored at
-`~/.codex-delegate/<runid>/status.json`.
+The blocking runner prints the final-message section before status. The same JSON is stored at `~/.codex-delegate/<runid>/status.json`.
 
 The record has exactly 16 fields:
 
@@ -9,20 +8,12 @@ The record has exactly 16 fields:
 - `diagnostic` gives the launcher or upstream failure reason; `signal` names a stopping signal.
 - `model`, `effort`, and `sandbox` record the selected launch policy.
 - `deadline_s` and `duration_s` record the wall-clock bound and observed duration.
-- `process_exit_code` is diagnostic. Terminal JSON evidence, not a zero process exit, decides the
-  Codex result.
+- `process_exit_code` is diagnostic. Terminal JSON evidence, not a zero process exit, decides the Codex result.
 - `terminal_event` is `turn.completed`, `turn.failed`, or null.
 - `final_message_path`, `events_path`, and `stderr_path` locate private run artifacts.
 
-The status writer consumes the event stream in the launcher process and publishes after process
-group cleanup. For `workspace-write`, the launcher rejects any writable root that overlaps its run
-storage.
+The status writer consumes the event stream in the launcher process and publishes after process group cleanup. For `workspace-write`, the launcher rejects any writable root that overlaps its run storage.
 
-`danger-full-access` is a plain trust boundary. Codex runs as the same user and can alter local
-artifacts, including its run directory. Status from that sandbox is useful operational output, not
-tamper-proof attestation. The launcher does not claim otherwise and performs no partial metadata
-tamper classification.
+`danger-full-access` is a plain trust boundary. Codex runs as the same user and can alter local artifacts, including its run directory. Status from that sandbox is useful operational output, not tamper-proof attestation. The launcher does not claim otherwise and performs no partial metadata tamper classification.
 
-Cleanup covers the private process group. A descendant that deliberately creates another process
-group or session is outside that scope. No status field claims complete system-wide orphan
-detection.
+Cleanup covers the private process group. A descendant that deliberately creates another process group or session is outside that scope. No status field claims complete system-wide orphan detection.

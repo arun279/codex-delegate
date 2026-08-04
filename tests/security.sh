@@ -22,14 +22,20 @@ export PATH=$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin
 
 PASS=0
 FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$*"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$*"; }
+ok() {
+  PASS=$((PASS + 1))
+  printf '  ok   %s\n' "$*"
+}
+bad() {
+  FAIL=$((FAIL + 1))
+  printf '  FAIL %s\n' "$*"
+}
 check() { if eval "$1"; then ok "$2"; else bad "$2 [$1]"; fi; }
 head_() { printf '\n== %s\n' "$*"; }
 
 permission_request() {
-  PERMISSION_OUT=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" \
-    | python3 "$PERMISSION_HOOK")
+  PERMISSION_OUT=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" |
+    python3 "$PERMISSION_HOOK")
   PERMISSION_RC=$?
 }
 

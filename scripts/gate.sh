@@ -56,7 +56,7 @@ run_step() {
   local name=$1 rc limit=$GATE_STEP_TIMEOUT_S
   shift
   printf '\n==> %s\n' "$name"
-  case "$name" in *suite|"corpus replay"|determinism) limit=$GATE_SUITE_TIMEOUT_S ;; esac
+  case "$name" in *suite | "corpus replay" | determinism) limit=$GATE_SUITE_TIMEOUT_S ;; esac
   if [ "${1:-}" = run_tool ]; then
     shift
     if command -v "$1" >/dev/null 2>&1; then

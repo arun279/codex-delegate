@@ -3,7 +3,7 @@ name: release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
       # newer interpreter would pass syntax this plugin cannot actually run.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.9'
+          python-version: "3.9"
 
       - run: npm install -g npm@11.5.1 @anthropic-ai/claude-code@2.1.220
 

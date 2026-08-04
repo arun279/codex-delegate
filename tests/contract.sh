@@ -20,13 +20,19 @@ trap 'rm -rf -- "$WORK"' EXIT INT TERM HUP
 
 PASS=0
 FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$*"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$*"; }
+ok() {
+  PASS=$((PASS + 1))
+  printf '  ok   %s\n' "$*"
+}
+bad() {
+  FAIL=$((FAIL + 1))
+  printf '  FAIL %s\n' "$*"
+}
 check() { if eval "$1"; then ok "$2"; else bad "$2 [$1]"; fi; }
 
 workflow_inline_() {
-  WORKFLOW_OUT=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Workflow","tool_input":{"script":sys.argv[1]}}))' "$1" \
-    | python3 "$WORKFLOW_LINT")
+  WORKFLOW_OUT=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Workflow","tool_input":{"script":sys.argv[1]}}))' "$1" |
+    python3 "$WORKFLOW_LINT")
   WORKFLOW_RC=$?
 }
 workflow_denies_() {

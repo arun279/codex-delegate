@@ -5,9 +5,7 @@ description: Route bounded coding, investigation, analysis, and independent revi
 
 # Codex
 
-Use `codex-delegate:runner` to send exactly one bounded job to Codex. Decide whether to delegate,
-choose the Codex model and effort, supply a self-contained prompt, and judge the result. The runner
-owns the single blocking launcher call. Never run `codex exec` directly.
+Use `codex-delegate:runner` to send exactly one bounded job to Codex. Decide whether to delegate, choose the Codex model and effort, supply a self-contained prompt, and judge the result. The runner owns the single blocking launcher call. Never run `codex exec` directly.
 
 ## Route the work
 
@@ -18,67 +16,51 @@ Send Codex:
 - bounded investigation or data analysis that would consume substantial context; and
 - a focused reproduction or test-writing task with objective acceptance criteria.
 
-Keep work here when taste drives the result, the check is quicker to do directly, or the task cannot
-be stated without hidden conversational context. Split unrelated substantial changes into separate
-calls.
+Keep work here when taste drives the result, the check is quicker to do directly, or the task cannot be stated without hidden conversational context. Split unrelated substantial changes into separate calls.
 
 ## Choose model and effort
 
-Run `codex-delegate models` for live model slugs, defaults, and supported effort levels. The command
-has no fallback catalog, so failure means model selection is unavailable and the job must not start.
+Run `codex-delegate models` for live model slugs, defaults, and supported effort levels. The command has no fallback catalog, so failure means model selection is unavailable and the job must not start.
 
 - Use a lower-cost visible model and lower-half effort for deterministic edits or narrow facts.
-- Use a higher-priority general model and middle or upper effort for cross-component changes,
-  ambiguous debugging, or substantive review.
-- Use upper-half effort when a miss is expensive, such as concurrency, architecture, security, or a
-  destructive migration.
+- Use a higher-priority general model and middle or upper effort for cross-component changes, ambiguous debugging, or substantive review.
+- Use upper-half effort when a miss is expensive, such as concurrency, architecture, security, or a destructive migration.
 - Prefer a purpose-built review model when the live catalog offers one.
 
-Name both `--model` and `--effort` when selection must be explicit. If either is omitted, the live
-catalog supplies that default. Environment variables do not override the pair.
+Name both `--model` and `--effort` when selection must be explicit. If either is omitted, the live catalog supplies that default. Environment variables do not override the pair.
 
 ## Make the call exactly this way
 
-The Workflow signature is
-`agent(prompt: string, opts?: {label?, phase?, schema?, model?, effort?, isolation?, agentType?})`.
-The prompt string is argument one and the options object is argument two.
+The Workflow signature is `agent(prompt: string, opts?: {label?, phase?, schema?, model?, effort?, isolation?, agentType?})`. The prompt string is argument one and the options object is argument two.
 
 ```js
 await agent(
   [
-    '===ARGS===',
-    '--sandbox workspace-write --cwd /abs/path --deadline 7200 --model <slug> --effort <level>',
-    '===PROMPT===',
+    "===ARGS===",
+    "--sandbox workspace-write --cwd /abs/path --deadline 7200 --model <slug> --effort <level>",
+    "===PROMPT===",
     promptBody,
-  ].join('\n'),
+  ].join("\n"),
   {
-    agentType: 'codex-delegate:runner',
-    label: 'codex:short-purpose',
-    phase: 'PhaseName',
+    agentType: "codex-delegate:runner",
+    label: "codex:short-purpose",
+    phase: "PhaseName",
   },
 );
 ```
 
 - Keep the `codex:` label prefix.
-- Never pass `model:`, `effort:`, or `tools:` in `agent()` options. Those configure the Claude
-  wrapper, not Codex. Put Codex selection in `===ARGS===`.
-- Use `isolation: 'worktree'` for parallel implementation calls that would otherwise share a
-  checkout.
-- Make `promptBody` non-empty and self-contained. Include the absolute repo path, goal, acceptance
-  criteria, boundaries, required checks, and required report.
-- Always pass an explicit sandbox and a deadline from 1 through 12,960. The launcher defaults to
-  7,200 seconds when called directly, but the runner rejects an absent or invalid value before Bash
-  starts.
+- Never pass `model:`, `effort:`, or `tools:` in `agent()` options. Those configure the Claude wrapper, not Codex. Put Codex selection in `===ARGS===`.
+- Use `isolation: 'worktree'` for parallel implementation calls that would otherwise share a checkout.
+- Make `promptBody` non-empty and self-contained. Include the absolute repo path, goal, acceptance criteria, boundaries, required checks, and required report.
+- Always pass an explicit sandbox and a deadline from 1 through 12,960. The launcher defaults to 7,200 seconds when called directly, but the runner rejects an absent or invalid value before Bash starts.
 
-The runner gives its one Bash call the tool maximum of 600,000 ms. If a job outlives that ceiling,
-the harness backgrounds the same still-running call instead of killing it and delivers the eventual
-result to the same runner. The launcher's own deadline continues to apply. Do not add polling,
-retrying, or a second launcher call.
+The runner gives its one Bash call the tool maximum of 600,000 ms. If a job outlives that ceiling, the harness backgrounds the same still-running call instead of killing it and delivers the eventual result to the same runner. The launcher's own deadline continues to apply. Do not add polling, retrying, or a second launcher call.
 
 ## `===ARGS===` vocabulary
 
 | flag | use |
-|---|---|
+| --- | --- |
 | `--sandbox read-only\|workspace-write\|danger-full-access` | Required. Implementation normally needs `workspace-write`. |
 | `--network` | Only with `workspace-write`; enables its network access. |
 | `--cwd DIR` | Working directory; prefer an absolute path. |
@@ -93,11 +75,10 @@ The runner appends `--prompt-stdin`; do not put either prompt-source flag in `==
 
 ## Read the verdict
 
-The runner returns the final-message section followed by status. Read `verdict`, `exit_code`, and
-`diagnostic`, then inspect the requested artifacts or diff before reporting success.
+The runner returns the final-message section followed by status. Read `verdict`, `exit_code`, and `diagnostic`, then inspect the requested artifacts or diff before reporting success.
 
 | verdict | meaning |
-|---|---|
+| --- | --- |
 | `COMPLETED` (0) | Codex emitted completion and produced a final message. |
 | `FAILED` (10) | Codex emitted `turn.failed`; read `diagnostic`. |
 | `DEADLINE` (11) | The wall-clock limit arrived first. |
@@ -109,12 +90,9 @@ The runner returns the final-message section followed by status. Read `verdict`,
 | `OUTPUT_MISSING` (23) | Codex completed without a final message. |
 | `STOPPED` (129/130/143) | The blocking caller received HUP, INT, or TERM and cleaned up the group. |
 
-Before relaying a finding, read its cited code. After implementation, inspect the diff and stop if
-the run touched unrelated files.
+Before relaying a finding, read its cited code. After implementation, inspect the diff and stop if the run touched unrelated files.
 
 ## References
 
-- [Prompt construction](reference/prompting.md) covers self-contained tasks, exact verification,
-  and interruption.
-- [Status and trust](reference/status-and-trust.md) defines all 16 fields and the writable-state
-  boundary.
+- [Prompt construction](reference/prompting.md) covers self-contained tasks, exact verification, and interruption.
+- [Status and trust](reference/status-and-trust.md) defines all 16 fields and the writable-state boundary.

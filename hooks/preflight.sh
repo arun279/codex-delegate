@@ -21,8 +21,8 @@ esc() {
 # Resolve symlinked ancestors so that a plugin loaded from, say, /tmp is not reported as a
 # different binary from the /private/tmp path PATH hands back.
 physical() {
-  ( cd -- "$(dirname -- "$1")" 2>/dev/null \
-    && printf '%s/%s' "$(pwd -P)" "$(basename -- "$1")" )
+  (cd -- "$(dirname -- "$1")" 2>/dev/null &&
+    printf '%s/%s' "$(pwd -P)" "$(basename -- "$1")")
 }
 
 add() {
