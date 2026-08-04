@@ -2,7 +2,7 @@
 
 Hand one coding task from Claude Code to the OpenAI Codex CLI and get the result back in one blocking call.
 
-The launcher starts `codex exec` in a private process group, reads its JSON event stream, enforces a wall-clock deadline, returns the final message, publishes one status record, and cleans up the group before it exits. `INT`, `TERM`, and `HUP` stop that same foreground run. There is no detached job, polling protocol, or recovery command.
+The launcher starts `codex exec` in a private process group, reads its JSON event stream, enforces a wall-clock deadline, returns the final message, publishes one status record, and cleans up the group before it exits. `INT`, `TERM`, and `HUP` stop that same foreground run. It records its own pid so a waiting caller can watch the process rather than a clock. The launcher has no detached mode, no job registry, and no recovery command: a run lives exactly as long as the process that started it.
 
 **Requires macOS**, Python 3, and the Codex CLI already installed and signed in.
 
@@ -56,7 +56,7 @@ await agent(
 );
 ```
 
-Both markers, a non-empty prompt body, an explicit `--sandbox`, and a deadline from 1 through 12,960 are required by the runner. Put Codex `--model` and `--effort` flags in `===ARGS===`, not in the Workflow options object. The runner gives its Bash call the 600,000 ms tool maximum. A longer job is backgrounded by the harness rather than killed, and its eventual result returns to the same runner; the launcher's own deadline continues to apply, so no polling or retry is needed.
+Both markers, a non-empty prompt body, an explicit `--sandbox`, and a deadline from 1 through 12,960 are required by the runner. Put Codex `--model` and `--effort` flags in `===ARGS===`, not in the Workflow options object. The runner starts the launcher as a background Bash call, so no Codex turn is bounded by a Bash timeout, and then holds its own turn by waiting on the launcher process until it ends, however it ends. The launcher's own deadline still bounds the run.
 
 ## From a terminal
 
@@ -116,13 +116,13 @@ A stopped run uses verdict `STOPPED` and exits with 128 plus the signal number: 
 
 ## Privacy, trust, and cleanup limits
 
-Starting a run sends the prompt and whatever files Codex reads to OpenAI through the signed-in Codex CLI. The private run directory under `~/.codex-delegate/<runid>/` stores `prompt.txt`, `events.jsonl`, `stderr.log`, an optional `final.txt`, and `status.json`. The root is owner-only and the prompt is transported to Codex through stdin, not its process arguments.
+Starting a run sends the prompt and whatever files Codex reads to OpenAI through the signed-in Codex CLI. The private run directory under `~/.codex-delegate/<runid>/` stores `pid`, `prompt.txt`, `events.jsonl`, `stderr.log`, an optional `final.txt`, and `status.json`. The root is owner-only and the prompt is transported to Codex through stdin, not its process arguments.
 
 For `read-only` and `workspace-write`, launcher state is outside Codex's writable roots. With `danger-full-access`, Codex runs as the same user and can modify any local artifact, including its run directory. In that sandbox, local status is operational output, not tamper-proof attestation.
 
 Cleanup owns the private process group created for Codex. Normal descendants inherit it and receive `INT`, then `TERM`, then `KILL` before the launcher returns. A descendant that deliberately creates a different process group or session falls outside that boundary. The launcher makes no broader orphan-detection claim.
 
-The plugin has no telemetry. Its broad `PreToolUse` hooks inspect Bash, Monitor, and Workflow call text to prevent an accidental direct Codex launch and malformed runner calls. The `PermissionRequest` hook is inert, so Claude Code's normal permission decision applies. A `SessionStart` hook checks the platform and required binaries. No end-of-session reaper is installed because runs are foreground and blocking.
+The plugin has no telemetry. Its broad `PreToolUse` hooks inspect Bash, Monitor, and Workflow call text to prevent an accidental direct Codex launch and malformed runner calls. The `PermissionRequest` hook is inert, so Claude Code's normal permission decision applies. A `SessionStart` hook checks the platform and required binaries. No end-of-session reaper is installed because a run cannot outlive the agent that started it.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete boundaries.
 
@@ -139,7 +139,7 @@ Install Codex from [developers.openai.com/codex/cli](https://developers.openai.c
 
 ## Uninstall
 
-Run `/codex-delegate:uninstall` before `claude plugin uninstall codex-delegate`. Because jobs are blocking foreground calls, uninstall has no background run to reap. The command removes local run artifacts and the obsolete permission rule that older releases may have installed.
+Run `/codex-delegate:uninstall` before `claude plugin uninstall codex-delegate`. A run is a Bash call owned by the agent that made it and ends when that agent does, so there is no job registry for uninstall to reap. The command removes local run artifacts and the obsolete permission rule that older releases may have installed.
 
 ## License
 

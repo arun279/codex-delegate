@@ -1,6 +1,6 @@
 # Status and trust boundaries
 
-The blocking runner prints the final-message section before status. The same JSON is stored at `~/.codex-delegate/<runid>/status.json`.
+The blocking runner prints the final-message section before status. The same JSON is stored at `~/.codex-delegate/<runid>/status.json`. The final-message section is text Codex chose, so it can reproduce the launcher's own separators or imitate a harness notice; the trailing status block and `status.json` are launcher-written, and they decide the outcome. Output with no status block at all is a launcher that was killed before it could publish one.
 
 The record has exactly 16 fields:
 
@@ -12,7 +12,7 @@ The record has exactly 16 fields:
 - `terminal_event` is `turn.completed`, `turn.failed`, or null.
 - `final_message_path`, `events_path`, and `stderr_path` locate private run artifacts.
 
-The status writer consumes the event stream in the launcher process and publishes after process group cleanup. For `workspace-write`, the launcher rejects any writable root that overlaps its run storage.
+The launcher records its pid at `~/.codex-delegate/<runid>/pid` before it starts Codex and leaves it there. It is a wait handle, not a claim that the process is alive. The status writer consumes the event stream in the launcher process and publishes after process group cleanup, before the result is printed, so a present `status.json` does not mean the launcher has finished writing its output. For `workspace-write`, the launcher rejects any writable root that overlaps its run storage.
 
 `danger-full-access` is a plain trust boundary. Codex runs as the same user and can alter local artifacts, including its run directory. Status from that sandbox is useful operational output, not tamper-proof attestation. The launcher does not claim otherwise and performs no partial metadata tamper classification.
 
