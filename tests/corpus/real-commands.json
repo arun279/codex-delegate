@@ -1,0 +1,847 @@
+[
+ {
+  "expect": "deny",
+  "command": "codex exec \"hi\""
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | head -60"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | grep -iE \"output|json|last-message|color\" | head -20"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | head -40; echo \"=== sandbox values ===\"; codex exec --help 2>&1 | grep -A5 -i \"sandbox\""
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/build/prompt-input.txt)\" </dev/null > /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/build/codex-run.log 2>&1; echo \"CODEX_EXIT=$?\" >> /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/build/codex-run.log"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/build/prompt-input.txt)\" </dev/null > /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/build/codex-run.log 2>&1; echo \"CODEX_EXIT=$?\" >> /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/build/codex-run.log"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | head -80"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec resume --help 2>&1 | head -40"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec resume --help 2>&1"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write --cd /fixture/home/Documents/projects/project-alpha \"x(x)x(x'x';x;x;x()x;x)x\\`x\\`x\\`x\\`x\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only --cd /fixture/home/Documents/projects/project-alpha \"x(x)x(x'x'x'x'x'x'x)x\" </dev/null > /fixture/home/Documents/projects/fixture-data/project-alpha/scrutiny/codex-output.md 2>&1\necho EXIT:$?"
+ },
+ {
+  "expect": "deny",
+  "command": "cd /fixture/home/Documents/projects/project-alpha-review && cat /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/prompt-input.md | codex exec -m gpt-5.6-sol -s read-only 2>&1 | tail -80"
+ },
+ {
+  "expect": "deny",
+  "command": "cd /fixture/home/Documents/projects/project-alpha-review && cat /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/prompt-input.md | codex exec -m gpt-5.6-sol -s read-only --skip-git-repo-check 2>&1 | tail -70"
+ },
+ {
+  "expect": "deny",
+  "command": "cd /fixture/home/Documents/projects/project-alpha-review && cat /private/tmp/fixture-driver/prompt-input.md | codex exec -m gpt-5.6-sol -s read-only --skip-git-repo-check - 2>&1 | tail -80"
+ },
+ {
+  "expect": "deny",
+  "command": "cd /fixture/home/Documents/projects/project-alpha-review && codex exec -m gpt-5.6-sol -s read-only --skip-git-repo-check - < /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/codex-prompt-input.md 2>&1 | tail -80"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only \"$(cat /tmp/codex-input-a.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /tmp/codex-input-b.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /tmp/codex-input-c.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /tmp/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-e2e/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-tokens/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-tokens/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-tokens/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-picker/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-picker/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-picker/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"x;x;x\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-grant/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-dead/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-dead/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-dead/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-controls/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-controls/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-controls/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol resume --last \"x;x(x)x(x)x(x)x(x)x*x*x&&x>x>&x;x=\\$?x'\\\\x'x;x\\\"\\$x\\$(x\\\"\\$x\\\"x|x)x\\\";x\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-drift/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-drift/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-e2e/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-copy/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-readout/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-readout/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-readout/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/target-spec/batch-a11y-fix/codex-prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec review --help 2>&1\necho \"--- resume ---\"\ncodex exec resume --help 2>&1\necho \"--- top level exec sandbox section ---\"\ncodex exec --help 2>&1 | sed -n '60,140p'"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec resume --last -s workspace-write \"hello\" </dev/null 2>&1 | head -20\necho \"EXIT=$?\""
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/task-spec.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /tmp/codex-input-d.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /tmp/codex-input-e.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /fixture/home/Documents/projects/fixture-data/project-alpha/task-spec.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write \"$(cat /tmp/codex-input-f.txt)\" < /dev/null"
+ },
+ {
+  "expect": "allow",
+  "command": "cd /private/tmp/codex-capmap && codex exec --help > codex-exec--help.txt 2>&1; cat codex-exec--help.txt"
+ },
+ {
+  "expect": "allow",
+  "command": "cd /private/tmp/codex-capmap && codex exec resume --help > codex-exec-resume--help.txt 2>&1; cat codex-exec-resume--help.txt"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write \"x;x'x'x'x'x'x'x(x)x\" 2>&1 | tail -300"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write -m gpt-5.6-sol \"x(x)x;x\n\nx(x)x\nx(x;x;x;x;x(x)x(x)x(x)x(x)x;x>=x)x\nx(x()x\\\"x\\\"x\\\"x\\\"x\\\"x\\\";x\\\"x\\\";x\\\"x\\\"x;x\\\"x\\\";x\\\"x\\\"x)\nx(x)x(x)x\nx(x;x)x(x)x[x]x\\\"x\\\"x(x;x)x\nx(x)x(x)x;x\\\"x\\\"x(x)x!=x=x(x);x=x(x=x=x)x;x(x)x=x(x<x>x)x(x'x)x\nx(x()x)x\\\"x\\\"x(x\\\"x\\\"x\\\"x\\\"x>x)x(x)x(x\\\"x\\\");x\nx[x][x][x]x=x\\\"x\\\"x;x(x*x)x\\\"x\\\"x(x)x\\\"x\\\"x\\\"x\\\"x\\\"x\\\"x=x(x)x\\\"x\\\"x;x(x)x(x)x\\\"x\\\"x;x(x[x])x\nx(x)x=x\\\"x\\\"x(x\\\"x\\\")x;x(x)x;x(x'x)x(x;x)x\nx\\\"x<x>\\\"x(x)x\\\"x\\\"x(x)x\\\"x\\\"x(x)x\\\"x\\\"x(x)x(x\\\"x\\\"x;x)\nx(x)x;x\n\nx\nx;x\nx(x)x;x\nx(x;x)x(x)x\nx(x()x)x\nx;x;x\\\"x\\\";x(x)x\nx;x;x\nx(x)x\n\nx(x)x'x'x'x'x(x);x'x'x'x'x'x'x\" 2>&1 | tail -300"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec resume --last -c sandbox_mode=\"workspace-write\" \"x'x(x)x\" 2>&1 | tail -300"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only --skip-git-repo-check \"x(x'x'x)x(x)x(x)x(x)x?x(x)x'x'?x(x)x'x'x\" </dev/null"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1"
+ },
+ {
+  "expect": "allow",
+  "command": "codex review --help 2>&1"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec resume --help 2>&1; echo \"---MCP---\"; codex mcp --help 2>&1"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec review --help 2>&1"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec resume --help"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only -C /fixture/home/Documents/projects/project-epsilon \"$(cat /tmp/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec \\\n  -C \"$PWD\" \\\n  --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/crunch/realdrive \\\n  -s danger-full-access \\\n  -o /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/crunch/realdrive/probe1/report.md \\\n  \"$(x)\" </dev/null 2>&1 | tail -100"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec - \\\n  -C \"$PWD\" \\\n  --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/crunch/realdrive \\\n  -s danger-full-access \\\n  -o /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/crunch/realdrive/probe1/report.md \\\n  < /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/crunch/realdrive/probe1/prompt-input.md 2>&1 | tail -100"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s workspace-write --skip-git-repo-check -o /fixture/home/Documents/projects/fixture-data/project-alpha/overhaul/crunch/realdrive/probe1/report2.md \"Reply with exactly the text OK and stop. Do nothing else.\" </dev/null 2>&1 | tail -50"
+ },
+ {
+  "expect": "allow",
+  "command": "which codex && codex --version && codex exec --help 2>&1 | head -100"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only -C /fixture/home/Documents/projects/project-alpha \"$(cat /tmp/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write -C /fixture/home/Documents/projects/project-alpha \"x;x;x;x;x;x;x;x;x*x*x;x=\\$?x\n\nx\n##x\n\nx'x\n\nx(x)x(x)x(x)x\n\nx'x;x'x\n\nx=x\n\nx(x)x\n\nx(x)\nx(()x=>x(x)x[x])x(x)x??x[x]?x|x(x)x(x)x\nx(x)x(x)x??x[x]?x\nx(x>x(x))x>x\nx'x=x[x]?x(x)x(x(x!==x))x\n\nx(x)x(x)x\n\nx=x\n\" 2>&1 | tail -200"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only -C /fixture/home/Documents/projects/project-alpha \"$(cat /tmp/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only -C /fixture/home/Documents/projects/project-alpha \"$(cat /tmp/prompt-input.txt)\" < /dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write -C /fixture/home/Documents/projects/project-alpha \"x;x;x;x;x;x;x;x;x*x*x'x;x=\\$?'x\n\nx\n##x\n\nx(x)x;x\n\nx'x\n\nx;x\n\nx(x)x\n\n(x)\n\nx=x\n\nx(x)x\n\nx\n\nx\nx(x=x!x&&x===x)x(x>x&&x)x(x===x)x(x)x(x)x>x(x)x(x)x\n\nx;x(x)x;x\n\nx()x=>x(x)x[x]x\n\nx()x=x(x)x(x)x;x;x**x\n\nx=x\n\nx\" "
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write -C /fixture/home/Documents/projects/project-alpha \"x;x;x;x;x;x;x;x;x*x*x'x;x=\\$?'x\n\nx\n##x\n\nx'x'x'x'x'x'x'x\n\nx;x;x'x\n\nx=x\n\nx(x)x\nx=x(x;x)\n\nx\" \n"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write -C /fixture/home/Documents/projects/project-alpha \"x;x;x;x;x;x;x;x;x*x*x;x=\\$?x\n\nx\nx=x\n\nx(x)x\nx'x(x)x===x('x')x(x);x;x;x;x;x==='x'x>x;x(x)x\n\nx*x*x\""
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write -C /fixture/home/Documents/projects/project-alpha \"x;x;x;x;x;x;x;x;x*x*x'x;x=\\$?'x\n\nx\nx\n\nx(x)x\n\nx(x)x\n\nx\nx(x)x===x('x')x(x)x'x'x\nx(x)x;x(x)x\nx>x'x\nx(x)x\nx;x\n\nx(x>x)x(x(x)x>x(x)x)x**x**x(x)x\n\nx(x)x'x\n\nx;x(x)x;x(x)x\n\nx(x)x(x)x(x)x(x);x&&x!x\n\nx=x\n\"\n"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only -C /fixture/home/Documents/projects/project-alpha \"x\n(x)x\nx\\`x\\`x(x\\`x\\`)x\nx\\`x\\`x\\`x\\`x(x)x\nx\\`x<x>\\`x\n\nx\nx'x\nx'x\n\n**x'x\nx**x\nx(x\\\"x\\\"x\nx)x\n\nx\nx**x(x)x**x\nx\nx\nx**x**x\nx\nx**x**x\nx\nx\nx**x**x\nx\nx**x**x;x;x\nx;x\nx;x\nx(x);x(x\nx);x\n\nx\nx\nx;x\nx(x)x\n\nx\nx=x(x)\nx=x(x)\nx=x\"\n"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s workspace-write -C /fixture/home/Documents/projects/project-alpha \"x;x;x;x;x;x;x;x;x*x*x;x=\\$?x\n\nx\nx\n\nx(x)x\n\nx(x)x(x)x\n\nx\n\nx\n\nx'x(x)x(x)x===x('x')x!x(x)x(x'x'x)x(x)x\nx(x)x;x(x)x|x'x'x\nx(x)x;x'x'x'x\nx;x(x)x'x'x\nx\nx(x==='x'x&&x>x)x!x&&x>x|x>x\n\nx;x(x)x;x**x(x)x;x;x\n\nx(x)x(x)x;x\n\nx=x\n\"\n"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only -C /fixture/home/Documents/projects/project-alpha \"x\n(x)x\nx(x)x\nx(x)x\nx<x>x\n\nx\nx'x\nx'x\n\nx'x\nx\nx(x\nx)x\n\nx\nx(x)x\nx\nx\nx**x**x\nx\nx\nx\nx\nx\nx\nx;x;x\nx;x\nx;x\nx(x);x(x\nx);x\n\nx\nx\nx;x\nx(x)x\n\nx\nx=x(x)\nx=x(x)\nx=x\"\n"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/release --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | head -100"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s read-only -m gpt-5.6-terra -c model_reasoning_effort=\"low\" -o /tmp/codex-standsalone-report.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t06 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t07 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t11 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t12 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t12 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x(x{})x\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t11 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t08 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t08 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x(x)x$(x|x)x\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t10 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x*x*x*x'x'x(x{})x'x'x'x'x(x[\\\"x\\\"x\\\"x\\\"x\\\"x\\\"]x[\\\"*x*x*\\\"]x)x'x'x'x'x\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s danger-full-access -o /tmp/codex-output.md \"x(x*x*)x;x'x'x(x{}x;x)x'x'x'x'x(x[\\\"x\\\"x\\\"x\\\"x\\\"x\\\"]x[\\\"*x*x*\\\"]x)x'x'x(x;x)x'x'x\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s read-only -o /tmp/codex-sec-out.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /fixture/home/Documents/projects/project-alpha --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s read-only -o /tmp/codex-sec-out2.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "cd /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/platform && codex review --commit fea0681f067145714fa0b4f163ce713cb5ef88ef > /tmp/codex-review-t14.md 2>&1"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/platform --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/platform --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x(x)x(x'x'x)x\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/platform --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/platform --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x;x(x;x;x;x;x;x;x;x)x'x'x'x'x\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/platform --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x(x)x'x'x'x(x(x))x()'x(x'x)x'x'x'x'x'x;x\" </dev/null"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec resume --help 2>&1 | head -20\necho \"=== config effort ===\"; grep -n \"reasoning_effort\\|^model\" ~/.codex/config.toml"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | sed -n '60,200p'"
+ },
+ {
+  "expect": "allow",
+  "command": "codex review --help 2>&1 | head -40"
+ },
+ {
+  "expect": "allow",
+  "command": "codex review --help 2>&1 | sed -n '1,20p'\necho \"===== bare/prompt-only behavior docs =====\"\ncodex review --help 2>&1 | grep -iE 'default|uncommitted|when no|branch' | head"
+ },
+ {
+  "expect": "allow",
+  "command": "codex review --help 2>&1 | grep -E '\\-o,|--output-last-message|--json'"
+ },
+ {
+  "expect": "allow",
+  "command": "codex review --help 2>&1 | grep -E '^\\s+(-|--)' "
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | sed -n '1,30p' | grep -iA3 -E 'stdin|prompt|reads|PROMPT'"
+ },
+ {
+  "expect": "deny",
+  "command": "ARTIFACT_DIR=\"/private/tmp/fixture-cache/codex-ios2.DvmBzd\"; REPORT=\"$ARTIFACT_DIR/report.md\"; PROMPT=\"$ARTIFACT_DIR/prompt-input.md\"; codex exec -m gpt-5.6-sol -C /fixture/home/Documents/projects/project-beta --add-dir \"$ARTIFACT_DIR\" -s read-only -o \"$REPORT\" \"$(cat \"$PROMPT\")\" </dev/null > \"$ARTIFACT_DIR/stdout.log\" 2>&1 &\necho \"started pid $!\""
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | sed -n '60,120p'"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -m gpt-5.6-sol -s read-only --cd /fixture/home/Documents/projects/project-beta \"$(cat /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/prompt-input.txt)\" > /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/codex_out.txt 2>&1; echo \"EXIT:$?\""
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | head -50"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol --cd /fixture/home/Documents/projects/project-beta/.claude/worktrees/wf_bac77742-16a-1 \"$(cat /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/prompt-input.md)\" > /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/port-review-out.md 2>&1; echo \"EXIT=$?\""
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec review --help 2>&1 | head -40"
+ },
+ {
+  "expect": "deny",
+  "command": "cd /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/wt-ci-hardening && cat codex-prompt-input.md | codex exec -s workspace-write -o report.md </dev/null --skip-git-repo-check 2>&1 | tail -100"
+ },
+ {
+  "expect": "deny",
+  "command": "cd /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/wt-ci-hardening && cat codex-prompt-input.md | codex exec -s workspace-write -o report.md </dev/null --skip-git-repo-check 2>&1 | tail -150"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | head -40"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | grep -A2 \"\\-s,\""
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec resume --last -c model_reasoning_effort=\"medium\" \"Continue. Finish the remaining work, then write your final report to \\$ARTIFACT_DIR/report.md as instructed.\""
+ },
+ {
+  "expect": "deny",
+  "command": "DIR=\"/private/tmp/fixture-cache//codex-delvar.L4BmuO\"; codex exec -m gpt-5.6-sol -s read-only -C /fixture/home/Documents/projects/project-beta -o \"$DIR/out.md\" \"$(cat $DIR/prompt-input.md)\" </dev/null 2> \"$DIR/err.log\""
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | tail -60; echo \"=== RESUME ===\"; codex exec resume --help 2>&1"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec resume --help 2>&1 | head -30"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec resume --help 2>&1 | tail -40"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C \"$PWD\" -s read-only -m gpt-5.6-sol -o /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/final-audit/holistic/report.md \"$(cat /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/final-audit/holistic/prompt-input.md)\" </dev/null"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -C \"$PWD\" -s workspace-write -m gpt-5.6-sol -o /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/final-audit/report.md \"$(x)\" </dev/null > /private/tmp/fixture-session/-fixture-home-projects-project-beta/session-id/fixture-data/final-audit/codex-run.log 2>&1 &\necho \"started pid $!\""
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec hello"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec --json 'say hi'"
+ },
+ {
+  "expect": "allow",
+  "command": "codex resume --help 2>&1"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec -h 2>&1 | grep -i reasoning\ncodex --help 2>&1 | grep -i reasoning\ncodex resume --help 2>&1 | grep -i reasoning\necho \"none found means no dedicated --reasoning-effort flag\""
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --json -s workspace-write --skip-git-repo-check --help 2>&1 | grep -A2 sandbox\necho \"---checking sandbox help desc via -s bogus---\"\ncd /private/tmp/fixture-session/-fixture-home-projects-projects-project-gamma/session-id/fixture-data/codex-probe\ncodex exec -s bogus \"hi\" 2>&1; echo EXIT:$?"
+ },
+ {
+  "expect": "allow",
+  "command": "cd /private/tmp/fixture-session/-fixture-home-projects-projects-project-gamma/session-id/fixture-data && codex exec --help 2>&1 | head -80"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | tail -100"
+ },
+ {
+  "expect": "allow",
+  "command": "/fixture/home/.local/bin/codex exec --help 2>&1; echo \"=== REVIEW ===\"; /fixture/home/.local/bin/codex review --help 2>&1; echo \"=== RESUME ===\"; /fixture/home/.local/bin/codex resume --help 2>&1"
+ },
+ {
+  "expect": "allow",
+  "command": "/fixture/home/.local/bin/codex exec --help 2>&1 | grep -i \"approval\\|ask-for\"; echo \"---checking if flag silently accepted---\"; /fixture/home/.local/bin/codex exec --ask-for-approval never \"echo hi\" 2>&1 | head -5"
+ },
+ {
+  "expect": "allow",
+  "command": "codex exec --help 2>&1 | sed -n '80,160p'"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol 'x(x)x(x)x(x)x;x(x)x(x)x(x)x[x]x;x(x)x(x)x;x(x)x;x(x)x;x(x)x(x)x;x'\n"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -s read-only -m gpt-5.6-sol --skip-git-repo-check 'x(x)x(x)x(x)x;x(x)x(x)x(x)x[x]x;x(x)x(x)x;x(x)x;x(x)x;x(x)x(x)x;x'\n"
+ },
+ {
+  "expect": "deny",
+  "command": "OPENAI_API_KEY=$KEY codex exec hi",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "2>/dev/null codex exec hi",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "printf '%s' 'codex exec hi' | bash",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "echo 'codex exec hi' | env bash",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "$SHELL -c 'codex exec hi'",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "caffeinate -i codex exec hi",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "env -S 'codex exec hi'",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "osascript -e 'do shell script \"codex exec hi\"'",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "awk 'BEGIN{system(\"codex exec hi\")}'",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "${X:-codex} exec hi",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "$(echo codex) exec hi",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "declare CX=codex; $CX exec hi",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "CX=cod; CY=ex; $CX$CY exec hi",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "printf 'codex exec hi' > /tmp/x.sh; bash /tmp/x.sh",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "GIT_EXTERNAL_DIFF='codex exec hi #' git diff",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "codex-code-mode-host --listen ws://127.0.0.1:8899",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "codex-app-server",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "codex.exe exec hi",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "codex review 'x'",
+  "source": "probe"
+ },
+ {
+  "expect": "deny",
+  "command": "codex resume --last 'x'",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "mv /fixture/other-home/repo/NOTES.md /fixture/home/.claude/projects/-fixture-other-home/codex-integration-redesign/NOTES.md",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "cp a.md /fixture/home/.claude/projects/-fixture-other-home/codex-integration-redesign/a.md",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "git checkout codex-fixes",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "ls /fixture/home/.claude/projects/-fixture-other-home/codex-integration-redesign",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "python3 -c \"import json;print(json.load(open('$B/j')))\"; ls /fixture/home/.claude/projects/-fixture-other-home/codex-integration-redesign",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "python3 -c \"print('$B')\"; cd /fixture/other-home/codex-delegate && git log | head -3",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "grep -rn 'codex exec' .",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "git commit -m 'guard blocks codex exec launches'",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "cat ~/.codex/config.toml",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "pgrep -fl codex",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "codex login",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "codex debug models",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "codex-delegate start --mode exec --prompt-stdin <<'EOF'\nrun `codex exec hi` $(whoami) | tee\nEOF",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "cat <<-EOF\n\tcodex exec hi\n\tEOF",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "cat <<'EOF-1'\ncodex exec hi\nEOF-1",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "bash scripts/build.sh --release",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "sh -x deploy.sh",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "bash",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "$HOME/bin/mytool --flag",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "make -j4",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "npm ci",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "docker build -t x .",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "find . -name '*.py' -exec grep -l foo {} +",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "rsync -a a/ b/",
+  "source": "probe"
+ },
+ {
+  "expect": "allow",
+  "command": "git commit -m 'Document why \"codex exec review\" is supervised'",
+  "source": "regression"
+ },
+ {
+  "expect": "allow",
+  "command": "git commit -F /private/tmp/codex-exec-review-message.txt",
+  "source": "regression"
+ },
+ {
+  "expect": "allow",
+  "command": "echo 'codex exec review'",
+  "source": "regression"
+ },
+ {
+  "expect": "allow",
+  "command": "printf '%s\\n' 'codex exec review'",
+  "source": "regression"
+ },
+ {
+  "expect": "allow",
+  "command": "grep -r \"codex exec\" .",
+  "source": "regression"
+ },
+ {
+  "expect": "allow",
+  "command": "rg \"codex exec\"",
+  "source": "regression"
+ },
+ {
+  "expect": "allow",
+  "command": "python3 -c \"command = 'codex exec review'; print(command)\"",
+  "source": "regression"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -- --help",
+  "source": "regression"
+ },
+ {
+  "expect": "deny",
+  "command": "codex exec -- --sandbox=bogus",
+  "source": "regression"
+ },
+ {
+  "expect": "deny",
+  "command": "sudo codex exec hi",
+  "source": "regression"
+ },
+ {
+  "expect": "deny",
+  "command": "find . -maxdepth 0 -exec codex exec hi \\;",
+  "source": "regression"
+ },
+ {
+  "expect": "deny",
+  "command": "python3 -c \"import subprocess; subprocess.run(args=['codex', 'exec', 'hi'])\"",
+  "source": "regression"
+ },
+ {
+  "expect": "deny",
+  "command": "python3 -c \"from subprocess import run; run(['codex', 'exec', 'hi'])\"",
+  "source": "regression"
+ }
+]

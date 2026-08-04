@@ -1,0 +1,89 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.repository == 'arun279/codex-delegate' && github.event.repository.fork == false && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      # The hooks target the python3 that ships with macOS, which is 3.9. Compiling them on a
+      # newer interpreter would pass syntax this plugin cannot actually run.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.9'
+
+      - run: npm install -g npm@11.5.1 @anthropic-ai/claude-code@2.1.220
+
+      # Keep both validations. Directory validation enters marketplace mode and skips component
+      # validation; naming plugin.json validates the component but does not read marketplace.json.
+      - run: claude plugin validate . --strict
+      - run: claude plugin validate ./.claude-plugin/plugin.json --strict
+
+      - name: Manifests
+        run: |
+          grep -q "Apache License" LICENSE
+          grep -q "Version 2.0" LICENSE
+          python3 scripts/embedded-python-check.py manifests
+
+      - name: Version and tag agreement
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/embedded-python-check.py release-versions
+
+      - name: Shell syntax
+        run: |
+          for file in $(git ls-files); do
+            if head -1 "$file" | grep -qE '^#!.*sh$'; then bash -n "$file"; fi
+          done
+
+      - name: Python syntax
+        run: python3 -m py_compile hooks/*.py scripts/*.py
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/codex-delegate-pycache
+
+      - name: Shellcheck
+        run: |
+          shellcheck --shell=sh --severity=warning hooks/preflight.sh
+          shellcheck --severity=error bin/codex-delegate
+
+      - name: Frontmatter
+        run: python3 scripts/lint-frontmatter.py
+
+      # tests/run.sh is deliberately not here. It launches real processes, reads the process table
+      # and asserts on teardown, so a shared runner cannot measure its process ownership safely.
+      - name: Create and push plugin tag
+        run: claude plugin tag --push .
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLUGIN_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "codex-delegate--v${PLUGIN_VERSION}" \
+            --verify-tag \
+            --title "codex-delegate v${PLUGIN_VERSION}" \
+            --generate-notes
+
+      - name: Publish npm package
+        run: npm publish --access public

@@ -1,0 +1,40 @@
+{
+  "name": "codex-delegate",
+  "version": "0.1.1",
+  "description": "Delegate one coding task from Claude Code to Codex through a blocking foreground launcher. It validates the live model pair, starts codex exec in a private process group, enforces a wall-clock deadline, reads the JSON terminal event, cleans up on completion or stop, and returns the final message with reduced status. Requires macOS, Python 3, and a signed-in Codex CLI. Prompts and files Codex reads are sent to OpenAI. Broad PreToolUse hooks inspect Bash, Monitor, and Workflow call text; the PermissionRequest hook is inert.",
+  "author": {
+    "name": "Arun Krishnamurthy",
+    "url": "https://github.com/arun279"
+  },
+  "homepage": "https://github.com/arun279/codex-delegate",
+  "repository": "https://github.com/arun279/codex-delegate",
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex",
+    "openai",
+    "delegation",
+    "subagent",
+    "process-groups",
+    "hooks",
+    "macos"
+  ],
+  "bin": {
+    "codex-delegate": "./bin/codex-delegate"
+  },
+  "os": [
+    "darwin"
+  ],
+  "files": [
+    ".claude-plugin/",
+    "bin/",
+    "agents/",
+    "skills/",
+    "commands/",
+    "hooks/",
+    "LICENSE",
+    "README.md",
+    "PRIVACY.md",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ]
+}

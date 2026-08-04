@@ -1,0 +1,180 @@
+#!/bin/bash
+# Offline stand-in for `codex`. It validates the exec argv and emits JSONL fixtures.
+set -uo pipefail
+
+live_catalog='{"models":[{"slug":"gpt-5.6-sol","priority":0,"default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}]},{"slug":"gpt-5.6-terra","priority":1,"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}]},{"slug":"codex-auto-review","priority":2,"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"}]}]}'
+minimal_catalog='{"models":[{"slug":"minimal-model","supported_reasoning_levels":[{"effort":"bespoke"}]}]}'
+invalid_catalog='{"models":[{"slug":"minimal-model","supported_reasoning_levels":[{"effort":"bespoke"}]},{"slug":"broken-model","supported_reasoning_levels":[]}]}'
+
+if [ "${1:-}" = debug ] && [ "${2:-}" = models ]; then
+  case "${STUB_CATALOG_MODE:-live}" in
+    live)    printf '%s\n' "$live_catalog" ;;
+    minimal) printf '%s\n' "$minimal_catalog" ;;
+    invalid) printf '%s\n' "$invalid_catalog" ;;
+    empty)   printf '%s\n' '{"models":[]}' ;;
+    fail)    exit 75 ;;
+    *)       printf 'stub codex: unknown catalog mode\n' >&2; exit 64 ;;
+  esac
+  exit 0
+fi
+
+stub_error() {
+  printf 'stub codex: invalid argv: %s\n' "$1" >&2
+  exit 64
+}
+
+OUT=""
+MODEL=""
+EFFORT=""
+SANDBOX=""
+CWD_ARG=""
+NETWORK=not_configured
+SCHEMA=none
+ADD_DIRS=()
+
+[ "${1:-}" = exec ] || stub_error "expected exec"
+shift
+[ "${1:-}" = --json ] || stub_error "missing --json"
+shift
+[ "${1:-}" = --skip-git-repo-check ] || stub_error "missing --skip-git-repo-check"
+shift
+[ "${1:-}" = -c ] && [ "${2:-}" = approval_policy=never ] \
+  || stub_error "missing approval_policy=never"
+shift 2
+[ "${1:-}" = -c ] || stub_error "missing model reasoning config"
+case "${2:-}" in
+  model_reasoning_effort=?*) EFFORT=${2#model_reasoning_effort=} ;;
+  *) stub_error "invalid model reasoning config" ;;
+esac
+shift 2
+[ "${1:-}" = -m ] && [ -n "${2:-}" ] || stub_error "missing model"
+MODEL=$2
+shift 2
+[ "${1:-}" = -s ] || stub_error "missing sandbox"
+case "${2:-}" in
+  read-only|workspace-write|danger-full-access) SANDBOX=$2 ;;
+  *) stub_error "invalid sandbox" ;;
+esac
+shift 2
+[ "${1:-}" = -C ] && [ -n "${2:-}" ] || stub_error "missing cwd"
+CWD_ARG=$2
+shift 2
+[ "${1:-}" = -o ] && [ -n "${2:-}" ] || stub_error "missing final-output path"
+OUT=$2
+shift 2
+
+while [ "${1:-}" = --add-dir ]; do
+  [ -n "${2:-}" ] || stub_error "empty add-dir"
+  ADD_DIRS+=("$2")
+  shift 2
+done
+if [ "${1:-}" = --output-schema ]; then
+  [ -n "${2:-}" ] || stub_error "empty output schema"
+  SCHEMA=$2
+  shift 2
+fi
+if [ "${1:-}" = -c ]; then
+  case "${2:-}" in
+    sandbox_workspace_write.network_access=true) NETWORK=enabled ;;
+    sandbox_workspace_write.network_access=false) NETWORK=disabled ;;
+    *) stub_error "unexpected config after output path" ;;
+  esac
+  shift 2
+fi
+if [ "$SANDBOX" = workspace-write ]; then
+  [ "$NETWORK" != not_configured ] || stub_error "workspace-write network config is missing"
+  [ "${1:-}" = -c ] && [ "${2:-}" = sandbox_workspace_write.exclude_slash_tmp=true ] \
+    || stub_error "workspace-write must exclude /tmp"
+  shift 2
+  [ "${1:-}" = -c ] && [ "${2:-}" = sandbox_workspace_write.exclude_tmpdir_env_var=true ] \
+    || stub_error "workspace-write must exclude TMPDIR"
+  shift 2
+  [ "${1:-}" = -c ] && [ "${2:-}" = 'sandbox_workspace_write.writable_roots=[]' ] \
+    || stub_error "workspace-write must pin writable roots"
+  shift 2
+elif [ "$NETWORK" != not_configured ]; then
+  stub_error "network config supplied outside workspace-write"
+fi
+[ "$#" = 2 ] && [ "$1" = -- ] && [ "$2" = - ] \
+  || stub_error "expected the exact stdin prompt suffix: -- -"
+
+PROCESS_CWD=$(pwd -P)
+if [ -n "${STUB_ARGV_CAPTURE:-}" ]; then
+  {
+    printf 'mode=exec\njson=true\nmodel=%s\neffort=%s\nsandbox=%s\nnetwork=%s\n' \
+      "$MODEL" "$EFFORT" "$SANDBOX" "$NETWORK"
+    printf 'cwd=%s\nprocess_cwd=%s\nprompt=stdin\nschema=%s\noutput=%s\n' \
+      "$CWD_ARG" "$PROCESS_CWD" "$SCHEMA" "$OUT"
+    for directory in ${ADD_DIRS[@]+"${ADD_DIRS[@]}"}; do printf 'add_dir=%s\n' "$directory"; done
+  } >"$STUB_ARGV_CAPTURE"
+fi
+if [ -n "${STUB_STDIN_CAPTURE:-}" ]; then
+  cat >"$STUB_STDIN_CAPTURE"
+fi
+[ -z "${STUB_PID_CAPTURE:-}" ] || printf '%s\n' "$$" >"$STUB_PID_CAPTURE"
+
+RUNID=$(basename "$(dirname "$OUT")")
+THREAD_ID=stub-thread-$RUNID
+emit() { printf '%s\n' "$1"; }
+emit "{\"type\":\"thread.started\",\"thread_id\":\"$THREAD_ID\"}"
+emit '{"type":"turn.started"}'
+
+case "${STUB_MODE:-ok}" in
+  ok)
+    emit '{"type":"item.completed","item":{"type":"agent_message","text":"stub finished the job"}}'
+    emit '{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":22}}'
+    printf 'STUB FINAL MESSAGE\n' >"$OUT"
+    ;;
+  fail)
+    emit '{"type":"turn.failed","error":{"message":"stub was told to fail"}}'
+    ;;
+  duplicate_terminal)
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    emit '{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":2}}'
+    printf 'DUPLICATE TERMINAL\n' >"$OUT"
+    ;;
+  malformed)
+    emit 'not-json'
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    printf 'MALFORMED STREAM OUTPUT\n' >"$OUT"
+    ;;
+  truncated)
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    printf '{"type":"turn.failed"'
+    printf 'TRUNCATED STREAM OUTPUT\n' >"$OUT"
+    ;;
+  no_terminal)
+    emit '{"type":"item.completed","item":{"type":"agent_message","text":"no terminal follows"}}'
+    ;;
+  no_final)
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    ;;
+  process_exit)
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    printf 'NONZERO PROCESS OUTPUT\n' >"$OUT"
+    exit 7
+    ;;
+  deadline_edge)
+    trap '' INT TERM
+    sleep "${STUB_TERMINAL_DELAY:-1.2}"
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    printf 'LATE TERMINAL OUTPUT\n' >"$OUT"
+    ;;
+  terminal_hold)
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    printf 'TERMINAL BEFORE HANG\n' >"$OUT"
+    trap '' INT TERM
+    while :; do sleep 0.2; done
+    ;;
+  hold)
+    trap '' INT TERM
+    sleep 600 &
+    descendant=$!
+    [ -z "${STUB_DESCENDANT_CAPTURE:-}" ] || printf '%s\n' "$descendant" >"$STUB_DESCENDANT_CAPTURE"
+    while :; do sleep 0.2; done
+    ;;
+  *)
+    printf 'stub codex: unknown STUB_MODE=%s\n' "${STUB_MODE:-}" >&2
+    exit 64
+    ;;
+esac

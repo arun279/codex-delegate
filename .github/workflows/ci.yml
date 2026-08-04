@@ -1,0 +1,139 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      # The hooks target the python3 that ships with macOS, which is 3.9. Compiling them on a
+      # newer interpreter would pass syntax this plugin cannot actually run.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.9"
+
+      - name: Install release-gate tools
+        run: |
+          npm install -g @anthropic-ai/claude-code@2.1.220 markdownlint-cli@0.47.0 prettier@3.6.2
+          python3 -m pip install --disable-pip-version-check ruff==0.16.1 mypy==1.17.1 vulture==2.14
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          GOBIN="$RUNNER_TEMP/release-tools" go install mvdan.cc/sh/v3/cmd/shfmt@v3.12.0
+          GOBIN="$RUNNER_TEMP/release-tools" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          GOBIN="$RUNNER_TEMP/release-tools" go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          curl -fsSLo "$RUNNER_TEMP/shellcheck.tar.xz" \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/shellcheck-v0.11.0/shellcheck" "$RUNNER_TEMP/release-tools/shellcheck"
+          echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
+
+      # Two invocations because they check different things. A directory holding both manifests
+      # puts validate in marketplace mode, where component validation is skipped entirely and a
+      # SKILL.md with unparseable YAML passes; naming plugin.json restores it but never reads
+      # marketplace.json. Neither one alone covers this repo.
+      - run: claude plugin validate . --strict
+      - run: claude plugin validate ./.claude-plugin/plugin.json --strict
+
+      # plugin.json declares Apache-2.0, so LICENSE has to be that text. The rest are the
+      # invariants Anthropic's community-marketplace CI applies to a submission: `claude plugin
+      # validate` checks marketplace.json for shape and none of these, so the first time they are
+      # evaluated is on someone else's runner, after the PR is open.
+      - name: Manifests
+        run: |
+          grep -q "Apache License" LICENSE
+          grep -q "Version 2.0" LICENSE
+          python3 scripts/embedded-python-check.py manifests
+
+      - name: Version agreement
+        run: python3 scripts/embedded-python-check.py versions
+
+      - name: Shell syntax
+        run: |
+          for file in $(git ls-files); do
+            if head -1 "$file" | grep -qE '^#!.*sh$'; then bash -n "$file"; fi
+          done
+
+      - name: Python syntax
+        run: python3 -m py_compile hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/codex-delegate-pycache
+
+      # preflight.sh is POSIX sh because its first job is to report that the machine is not macOS.
+      # On macOS /bin/sh is bash, so a bashism in it would never surface locally, and `bash -n`
+      # accepts every one of them. --severity=warning is where shellcheck reports the SC3xxx
+      # "undefined in POSIX sh" family, which is the only invocation that catches this.
+      - name: Shellcheck
+        run: |
+          shellcheck --shell=sh --severity=warning hooks/preflight.sh
+          shellcheck --severity=error bin/codex-delegate
+
+      - name: Frontmatter
+        run: python3 scripts/lint-frontmatter.py
+
+      - name: Static release checks
+        run: |
+          ruff check .
+          ruff format --check .
+          ruff check --select S .
+          mypy --strict hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
+          vulture hooks scripts tests --min-confidence 80
+          shellcheck --shell=sh --severity=warning hooks/preflight.sh
+          shellcheck --severity=error bin/codex-delegate scripts/*.sh tests/*.sh
+          shfmt -d -i 2 -ci bin/codex-delegate hooks/preflight.sh scripts tests
+          bash -n hooks/preflight.sh bin/codex-delegate scripts/*.sh tests/*.sh
+          markdownlint '**/*.md'
+          prettier --check '**/*.{md,json,yml,yaml}'
+          actionlint
+          gitleaks detect --source . --no-banner --redact
+          python3 scripts/embedded-python-check.py
+
+  macos-release-gate:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      # Hooks run under the Python version shipped with supported macOS releases.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.9"
+
+      - name: Install release-gate tools
+        run: |
+          npm install -g @anthropic-ai/claude-code@2.1.220 markdownlint-cli@0.47.0 prettier@3.6.2
+          python3 -m pip install --disable-pip-version-check ruff==0.16.1 mypy==1.17.1 vulture==2.14
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          GOBIN="$RUNNER_TEMP/release-tools" go install mvdan.cc/sh/v3/cmd/shfmt@v3.12.0
+          GOBIN="$RUNNER_TEMP/release-tools" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          GOBIN="$RUNNER_TEMP/release-tools" go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          case "$(uname -m)" in
+            arm64) shellcheck_platform=darwin.aarch64 ;;
+            x86_64) shellcheck_platform=darwin.x86_64 ;;
+            *) echo "unsupported macOS architecture: $(uname -m)" >&2; exit 2 ;;
+          esac
+          curl -fsSLo "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.${shellcheck_platform}.tar.xz"
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/shellcheck-v0.11.0/shellcheck" "$RUNNER_TEMP/release-tools/shellcheck"
+          echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
+
+      # GitHub-hosted macOS runners are single-tenant VMs. The suite can therefore make
+      # process-table and teardown assertions without observing another customer's jobs.
+      # tests/stub/codex supplies every Codex event, so this needs no credentials or OpenAI access.
+      - name: Security regression suite
+        run: bash tests/security.sh
+
+      - name: Full release gate
+        run: bash scripts/gate.sh
