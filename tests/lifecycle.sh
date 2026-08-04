@@ -4,12 +4,12 @@ set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 BIN=$ROOT/bin/codex-delegate
-TMP_BASE=${TMPDIR:-/tmp}
-WORK=$(mktemp -d "${TMP_BASE%/}/codex-delegate-lifecycle.XXXXXX") || {
+. "$ROOT/scripts/test-temp.sh"
+test_temp_create "$ROOT" lifecycle || {
   echo "lifecycle: temporary directory creation failed" >&2
   exit 2
 }
-WORK=$(cd -- "$WORK" && pwd -P) || exit 2
+WORK=$CODEX_DELEGATE_TEST_TMP_WORK
 PIDS=()
 cleanup() {
   local pid
@@ -17,9 +17,12 @@ cleanup() {
     kill -TERM "$pid" 2>/dev/null || true
     kill -KILL "$pid" 2>/dev/null || true
   done
-  rm -rf -- "$WORK"
+  test_temp_cleanup
 }
-trap cleanup EXIT INT TERM HUP
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 mkdir -p "$WORK/home" "$WORK/runs" "$WORK/job" || exit 2
 printf 'exercise lifecycle\n' >"$WORK/prompt.txt"

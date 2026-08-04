@@ -15,10 +15,10 @@ esac
   exit 2
 }
 
-TMP_BASE=${TMPDIR:-/tmp}
-WORK=$(mktemp -d "${TMP_BASE%/}/codex-delegate-determinism.XXXXXX") || exit 2
-WORK=$(cd -- "$WORK" && pwd -P) || exit 2
-trap 'rm -rf -- "$WORK"' EXIT INT TERM HUP
+. "$ROOT/scripts/test-temp.sh"
+test_temp_create "$ROOT" determinism || exit 2
+WORK=$CODEX_DELEGATE_TEST_TMP_WORK
+test_temp_install_traps
 mkdir -p "$WORK/home" "$WORK/runs" "$WORK/job" || exit 2
 printf 'Perform the same deterministic offline stub job.\n' >"$WORK/prompt.txt"
 export HOME=$WORK/home

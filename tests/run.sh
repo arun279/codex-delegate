@@ -3,14 +3,14 @@
 set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
-BIN=$ROOT/bin/codex-delegate
-TMP_BASE=${TMPDIR:-/tmp}
-WORK=$(mktemp -d "${TMP_BASE%/}/codex-delegate-run.XXXXXX") || {
+BIN=${CODEX_DELEGATE_TEST_BIN:-$ROOT/bin/codex-delegate}
+. "$ROOT/scripts/test-temp.sh"
+test_temp_create "$ROOT" run || {
   echo "run suite: temporary directory creation failed" >&2
   exit 2
 }
-WORK=$(cd -- "$WORK" && pwd -P) || exit 2
-trap 'rm -rf -- "$WORK"' EXIT INT TERM HUP
+WORK=$CODEX_DELEGATE_TEST_TMP_WORK
+test_temp_install_traps
 
 mkdir -p "$WORK/home" "$WORK/runs" "$WORK/job" "$WORK/extra" || exit 2
 printf '{"type":"object"}\n' >"$WORK/schema.json"
@@ -44,6 +44,16 @@ run_case() {
   check '[ -f "$WORK/runs/$runid/status.json" ]' "$runid writes one status record"
   check '[ "$(json_ "$WORK/runs/$runid/status.json" exit_code)" = "$expected" ]' \
     "$runid status exit matches the command"
+}
+
+stdin_case() {
+  local name=$1 expected=$2 capture=$WORK/$1.stdin rc
+  STUB_MODE=ok STUB_STDIN_CAPTURE=$capture "$BIN" run --prompt-stdin \
+    --sandbox read-only --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol \
+    --effort medium --runid "$name" >"$WORK/$name.out" 2>"$WORK/$name.err"
+  rc=$?
+  check '[ "$rc" = 0 ] && cmp -s "$expected" "$capture"' \
+    "$name transports the exact stdin bytes (got exit $rc)"
 }
 
 printf 'Prompt body with $(), backticks `x`, quotes, and CODEX_DELEGATE_PROMPT_EOF.\n' >"$WORK/prompt.txt"
@@ -137,6 +147,61 @@ check 'grep -Fxq "sandbox=workspace-write" "$WORK/argv.txt" && grep -Fxq "networ
 check 'grep -Fxq "add_dir=$WORK/extra" "$WORK/argv.txt" && grep -Fxq "schema=$WORK/schema.json" "$WORK/argv.txt"' \
   "native add-dir and output-schema flags survive"
 check '! grep -Fq "Prompt body" "$WORK/argv.txt"' "prompt text is absent from captured argv"
+
+head_ "runner-shaped stdin prompt transport"
+printf 'ordinary prompt through stdin\n' >"$WORK/stdin-ordinary.expected"
+stdin_case stdin-ordinary "$WORK/stdin-ordinary.expected" <<'CODEX_DELEGATE_PROMPT_11111111111111111111111111111111'
+ordinary prompt through stdin
+CODEX_DELEGATE_PROMPT_11111111111111111111111111111111
+
+printf '%s\n' before CODEX_DELEGATE_PROMPT_22222222222222222222222222222222 after \
+  >"$WORK/stdin-delimiter.expected"
+stdin_case stdin-delimiter "$WORK/stdin-delimiter.expected" <<'CODEX_DELEGATE_PROMPT_33333333333333333333333333333333'
+before
+CODEX_DELEGATE_PROMPT_22222222222222222222222222222222
+after
+CODEX_DELEGATE_PROMPT_33333333333333333333333333333333
+
+printf '%s\n' \
+  'literal $HOME ${PATH} $(printf expanded) `uname` ; | & < > "double" '"'"'single'"'"' \\' \
+  >"$WORK/stdin-metacharacters.expected"
+stdin_case stdin-metacharacters "$WORK/stdin-metacharacters.expected" <<'CODEX_DELEGATE_PROMPT_44444444444444444444444444444444'
+literal $HOME ${PATH} $(printf expanded) `uname` ; | & < > "double" 'single' \\
+CODEX_DELEGATE_PROMPT_44444444444444444444444444444444
+
+printf 'first trailing line\nsecond trailing line\n\n\n' >"$WORK/stdin-trailing.expected"
+stdin_case stdin-trailing "$WORK/stdin-trailing.expected" <<'CODEX_DELEGATE_PROMPT_55555555555555555555555555555555'
+first trailing line
+second trailing line
+
+
+CODEX_DELEGATE_PROMPT_55555555555555555555555555555555
+
+NO_TRAILING_NEWLINE=$(
+  cat <<'CODEX_DELEGATE_PROMPT_66666666666666666666666666666666'
+stdin prompt with no trailing newline
+CODEX_DELEGATE_PROMPT_66666666666666666666666666666666
+)
+printf %s "$NO_TRAILING_NEWLINE" >"$WORK/stdin-no-newline.expected"
+stdin_case stdin-no-newline "$WORK/stdin-no-newline.expected" \
+  < <(printf %s "$NO_TRAILING_NEWLINE")
+
+printf '%s\n' 'UTF-8: café — 雪 — 🙂 — decomposed é' >"$WORK/stdin-utf8.expected"
+stdin_case stdin-utf8 "$WORK/stdin-utf8.expected" <<'CODEX_DELEGATE_PROMPT_77777777777777777777777777777777'
+UTF-8: café — 雪 — 🙂 — decomposed é
+CODEX_DELEGATE_PROMPT_77777777777777777777777777777777
+
+: >"$WORK/stdin-empty.expected"
+STUB_MODE=ok STUB_STDIN_CAPTURE=$WORK/stdin-empty.stdin \
+  "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" --deadline 10 \
+  --model gpt-5.6-sol --effort medium --runid stdin-empty \
+  >"$WORK/stdin-empty.out" 2>"$WORK/stdin-empty.err" <<'CODEX_DELEGATE_PROMPT_88888888888888888888888888888888'
+CODEX_DELEGATE_PROMPT_88888888888888888888888888888888
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "the prompt is empty" "$WORK/stdin-empty.err" &&
+       cmp -s "$WORK/stdin-empty.expected" "$WORK/runs/stdin-empty/prompt.txt" &&
+       [ ! -e "$WORK/stdin-empty.stdin" ]' \
+  "an empty stdin body is stored empty and rejected before Codex starts"
 
 head_ "terminal event and status contract"
 run_case ok completed 0

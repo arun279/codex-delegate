@@ -4,6 +4,13 @@ set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$ROOT" || exit 2
+. "$ROOT/scripts/test-temp.sh"
+test_temp_create "$ROOT" gate || {
+  echo "release gate: temporary directory creation failed" >&2
+  exit 2
+}
+export TMPDIR=$CODEX_DELEGATE_TEST_TMP_WORK
+test_temp_install_traps
 
 NAMES=()
 RESULTS=()
