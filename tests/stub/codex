@@ -159,15 +159,21 @@ case "${STUB_MODE:-ok}" in
     ;;
   deadline_edge)
     trap '' INT TERM
+    emit '{"type":"item.completed","item":{"type":"agent_message","text":"LATE TERMINAL OUTPUT"}}'
     sleep "${STUB_TERMINAL_DELAY:-1.2}"
     emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
-    printf 'LATE TERMINAL OUTPUT\n' >"$OUT"
     ;;
   terminal_hold)
+    emit '{"type":"item.completed","item":{"type":"agent_message","text":"TERMINAL BEFORE HANG"}}'
     emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
-    printf 'TERMINAL BEFORE HANG\n' >"$OUT"
     trap '' INT TERM
     while :; do sleep 0.2; done
+    ;;
+  multi_message)
+    emit '{"type":"item.completed","item":{"type":"agent_message","text":"an interim message"}}'
+    emit '{"type":"item.completed","item":{"type":"agent_message","text":"THE LAST MESSAGE"}}'
+    emit '{"type":"item.completed","item":{"type":"agent_message"}}'
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
     ;;
   hold)
     trap '' INT TERM

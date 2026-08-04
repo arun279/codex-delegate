@@ -93,6 +93,34 @@ check 'wait_gone "$CHILD"' "terminal cleanup reaps the Codex group leader"
 check '[ "$(json_ "$RD/status.json" terminal_event)" = '"'"'"turn.completed"'"'"' ] &&
        [ "$(json_ "$RD/status.json" process_exit_code)" = -9 ]' \
   "status records both terminal evidence and forced process exit"
+printf 'TERMINAL BEFORE HANG' >"$WORK/terminal.expected"
+check 'cmp -s "$WORK/terminal.expected" "$RD/final.txt" &&
+       [ "$(text_ "$RD/status.json" verdict)" = COMPLETED ] &&
+       grep -q "TERMINAL BEFORE HANG" "$WORK/terminal.out"' \
+  "a streamed final message survives a Codex process killed before it wrote one"
+
+head_ "the process handle a blocked caller waits on"
+STUB_MODE=hold STUB_PID_CAPTURE=$WORK/handle.pid STUB_DESCENDANT_CAPTURE=$WORK/handle-child.pid \
+  "$BIN" run "${run_args[@]}" --deadline 30 --runid lc-handle \
+  >"$WORK/handle.out" 2>"$WORK/handle.err" &
+LAUNCHER=$!
+PIDS+=("$LAUNCHER")
+RD=$WORK/runs/lc-handle
+check 'wait_file "$RD/pid"' "the launcher records its pid before it starts Codex"
+wait_file "$WORK/handle.pid" && wait_file "$WORK/handle-child.pid"
+CHILD=$(cat "$WORK/handle.pid")
+DESCENDANT=$(cat "$WORK/handle-child.pid")
+PIDS+=("$CHILD" "$DESCENDANT")
+check '[ "$(cat "$RD/pid")" = "$LAUNCHER" ]' "the recorded pid is the process the caller holds"
+check 'kill -0 "$(cat "$RD/pid")" 2>/dev/null' "that pid answers kill -0 while the run is alive"
+kill -KILL "$LAUNCHER"
+wait "$LAUNCHER" 2>/dev/null
+check '! kill -0 "$(cat "$RD/pid")" 2>/dev/null' \
+  "and stops answering after a kill the launcher cannot report"
+check '[ ! -e "$RD/status.json" ] && [ ! -s "$WORK/handle.out" ]' \
+  "that kill leaves no status and no output, so silence is a death and not a result"
+kill -KILL "$CHILD" 2>/dev/null
+kill -KILL "$DESCENDANT" 2>/dev/null
 
 head_ "wall-clock deadline"
 SECONDS=0
@@ -148,6 +176,9 @@ check '[ "$RC" = 11 ]' "a terminal event observed after the deadline cannot reve
 check '[ "$(text_ "$RD/status.json" verdict)" = DEADLINE ] &&
        [ "$(json_ "$RD/status.json" exit_code)" = 11 ]' \
   "late output is not reported as completed"
+printf 'LATE TERMINAL OUTPUT' >"$WORK/edge.expected"
+check 'cmp -s "$WORK/edge.expected" "$RD/final.txt"' \
+  "a captured message is kept as evidence without becoming a completion"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 exit $((FAIL > 0))

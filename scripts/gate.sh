@@ -131,6 +131,7 @@ else
   run_step "embedded Python" python3 scripts/embedded-python-check.py
   run_step "frontmatter lint" python3 scripts/lint-frontmatter.py
   run_step "documentation claim check" python3 scripts/claim-check.py
+  run_step "runner protocol" python3 scripts/runner-protocol-check.py
 fi
 
 printf '\n================ RELEASE GATE SUMMARY ================\n'

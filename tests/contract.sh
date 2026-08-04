@@ -68,9 +68,9 @@ check 'perl -0ne '"'"'exit 1 if /agent\s*\(\s*\{/s'"'"' "$WORK/js-blocks.txt"' \
   "no JavaScript example puts an object in the prompt slot"
 check 'grep -q "===ARGS===" "$RUNNER" && grep -q "===PROMPT===" "$RUNNER" &&
        grep -q "non-empty" "$RUNNER" && grep -q "1 through 12,960" "$RUNNER" &&
-       grep -q "backgrounds" "$RUNNER" && grep -q "same agent" "$RUNNER"' \
+       grep -q -- "no .--runid." "$RUNNER"' \
   "runner validates its complete envelope before Bash"
-check 'grep -q "Make one Bash call" "$RUNNER" && grep -q "codex-delegate run" "$RUNNER" &&
+check '[ "$(grep -c "^codex-delegate run" "$RUNNER")" = 1 ] &&
        ! grep -q "codex-delegate start\|codex-delegate wait\|codex-delegate status\|codex-delegate reap" "$RUNNER"' \
   "runner has exactly one blocking launcher operation"
 check 'grep -q "Environment variables do not override" "$SKILL" &&

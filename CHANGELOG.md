@@ -4,6 +4,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The ver
 
 ## [Unreleased]
 
+### Added
+
+- Recorded the launcher pid in the run directory, so a caller blocked past the harness's Bash ceiling can wait on the process instead of a clock.
+- Added `scripts/runner-protocol-check.py` to the release gate. It executes the Bash `agents/runner.md` prescribes: three earlier wait prescriptions shipped without ever being run.
+
+### Fixed
+
+- Took the final message from the event stream the launcher already parses, so a message Codex emitted before cleanup terminated it is no longer discarded and reported as `OUTPUT_MISSING`.
+- Held the runner alive across the harness's 600 second Bash ceiling, so a job the harness backgrounded is no longer destroyed and reported to the caller as progress.
+- Ended that wait on the launcher process rather than on elapsed time, so a job that finishes early is returned at once and a launcher killed without publishing status is reported as a death instead of an empty success.
+- Started the launcher as a background Bash call. A foreground call is handed off alive only for some command shapes, and measurably kills the launcher otherwise: a bare command reached the ceiling and was backgrounded, while the same command behind a variable assignment was killed at 600s and left `verdict STOPPED, exit_code 143`. Backgrounding also puts the wait on the path every run takes rather than only runs past ten minutes.
+- Sized `maxTurns` so a wait call that loses its 600,000 ms timeout and dies at the 120 second default still cannot exhaust the budget before the deadline a run can reach.
+
 ## [0.1.1] - 2026-08-03
 
 ### Changed

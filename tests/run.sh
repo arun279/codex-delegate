@@ -235,8 +235,13 @@ run_case no_terminal no-terminal 21
 check '[ "$(json_ "$WORK/runs/no-terminal/status.json" verdict)" = '"'"'"NO_TERMINAL_EVENT"'"'"' ]' \
   "process exit without a terminal event is distinct"
 run_case no_final no-final 23
-check '[ "$(json_ "$WORK/runs/no-final/status.json" verdict)" = '"'"'"OUTPUT_MISSING"'"'"' ]' \
-  "completion without final output is distinct"
+check '[ "$(json_ "$WORK/runs/no-final/status.json" verdict)" = '"'"'"OUTPUT_MISSING"'"'"' ] &&
+       [ ! -e "$WORK/runs/no-final/final.txt" ]' \
+  "completion without any message in the stream is the only OUTPUT_MISSING"
+run_case multi_message multi-message 0
+printf 'THE LAST MESSAGE' >"$WORK/multi-message.expected"
+check 'cmp -s "$WORK/multi-message.expected" "$WORK/runs/multi-message/final.txt"' \
+  "a later record without text cannot unseat the last streamed agent message"
 run_case process_exit process-exit 0
 check '[ "$(json_ "$WORK/runs/process-exit/status.json" process_exit_code)" = 7 ]' \
   "terminal evidence remains authoritative while process exit stays diagnostic"

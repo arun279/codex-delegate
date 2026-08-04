@@ -224,6 +224,13 @@ def allocate_run(root, requested):
     return runid, run_dir
 
 
+def record_pid(path):
+    with open(path, "x", encoding="utf-8") as output:
+        output.write(f"{os.getpid()}\n")
+        output.flush()
+        os.fsync(output.fileno())
+
+
 def store_prompt(args, path):
     with open(path, "xb") as output:
         if args.prompt_stdin:
@@ -274,6 +281,7 @@ class Capture:
         self.terminal = None
         self.terminal_at = None
         self.failure_message = None
+        self.message = None
 
     def mark_error(self, kind):
         if self.error is None:
@@ -292,6 +300,12 @@ class Capture:
             self.mark_error("invalid_event_record")
             return
         kind = event["type"]
+        if kind == "item.completed":
+            item = event.get("item")
+            text = item.get("text") if isinstance(item, dict) else None
+            if isinstance(text, str) and item.get("type") == "agent_message":
+                self.message = text
+            return
         if kind not in ("turn.completed", "turn.failed"):
             return
         if self.terminal is not None:
@@ -395,6 +409,10 @@ def atomic_status(path, status):
     os.chmod(path, 0o400)
 
 
+def has_final_message(path):
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
+
 def print_result(final_path, status):
     print(f"\n--- FINAL MESSAGE ({final_path}) ---", flush=True)
     if status["final_message_path"]:
@@ -423,7 +441,6 @@ def status_for(
     terminal,
 ):
     final_path = context["final_path"]
-    has_final = os.path.isfile(final_path) and os.path.getsize(final_path) > 0
     return {
         "schema_version": 1,
         "runid": context["runid"],
@@ -438,7 +455,7 @@ def status_for(
         "duration_s": round(duration, 6),
         "process_exit_code": process_code,
         "terminal_event": terminal,
-        "final_message_path": final_path if has_final else None,
+        "final_message_path": final_path if has_final_message(final_path) else None,
         "events_path": context["events_path"],
         "stderr_path": context["stderr_path"],
     }
@@ -457,6 +474,7 @@ def run(args, codex, models):
             if paths_overlap(root, writable):
                 raise UserError(f"run storage {root} overlaps writable root {writable}")
     runid, run_dir = allocate_run(root, args.runid)
+    record_pid(os.path.join(run_dir, "pid"))
     prompt_path = os.path.join(run_dir, "prompt.txt")
     final_path = os.path.join(run_dir, "final.txt")
     events_path = os.path.join(run_dir, "events.jsonl")
@@ -544,6 +562,10 @@ def run(args, codex, models):
         capture.finish()
         watcher.close()
 
+    if capture.message and not has_final_message(final_path):
+        with open(final_path, "w", encoding="utf-8") as final:
+            final.write(capture.message)
+
     signal_name = signal.Signals(notice["number"]).name if outcome == "signal" else None
     if not clean:
         verdict, diagnostic = "CLEANUP_FAILED", "the Codex process group survived SIGKILL"
@@ -561,11 +583,11 @@ def run(args, codex, models):
         verdict, diagnostic = "FAILED", capture.failure_message or "Codex emitted turn.failed"
         code = EXIT[verdict]
     elif capture.terminal == "turn.completed":
-        if os.path.isfile(final_path) and os.path.getsize(final_path) > 0:
+        if has_final_message(final_path):
             verdict, diagnostic = "COMPLETED", None
             code = EXIT[verdict]
         else:
-            verdict, diagnostic = "OUTPUT_MISSING", "Codex completed without a final message"
+            verdict, diagnostic = "OUTPUT_MISSING", "Codex completed without emitting a message"
             code = EXIT[verdict]
     else:
         verdict, diagnostic = "NO_TERMINAL_EVENT", "Codex exited without turn.completed or turn.failed"

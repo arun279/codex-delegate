@@ -55,7 +55,7 @@ await agent(
 - Make `promptBody` non-empty and self-contained. Include the absolute repo path, goal, acceptance criteria, boundaries, required checks, and required report.
 - Always pass an explicit sandbox and a deadline from 1 through 12,960. The launcher defaults to 7,200 seconds when called directly, but the runner rejects an absent or invalid value before Bash starts.
 
-The runner gives its one Bash call the tool maximum of 600,000 ms. If a job outlives that ceiling, the harness backgrounds the same still-running call instead of killing it and delivers the eventual result to the same runner. The launcher's own deadline continues to apply. Do not add polling, retrying, or a second launcher call.
+The runner starts exactly one launcher run, as a background Bash call so that no Codex turn is bounded by a Bash timeout, and then holds its own turn by waiting on the launcher process, one bounded call per turn, until that process ends. The launcher's own deadline still bounds the run. Do not add polling, retrying, or a second launcher call of your own.
 
 ## `===ARGS===` vocabulary
 
@@ -67,7 +67,7 @@ The runner gives its one Bash call the tool maximum of 600,000 ms. If a job outl
 | `--add-dir DIR` | Repeatable extra writable root. |
 | `--schema FILE` | Final-message JSON Schema. |
 | `--deadline SECONDS` | Required for runner calls, from 1 through 12,960; direct launcher calls default to 7,200. |
-| `--runid ID` | Optional unique artifact key using letters, digits, `.`, `_`, and `-`. |
+| `--runid ID` | Runner-owned; it names the run directory the runner waits on. Do not pass it. |
 | `--model M` | Exact slug from `codex-delegate models`. |
 | `--effort LEVEL` | Effort advertised for that model. |
 
@@ -75,7 +75,7 @@ The runner appends `--prompt-stdin`; do not put either prompt-source flag in `==
 
 ## Read the verdict
 
-The runner returns the final-message section followed by status. Read `verdict`, `exit_code`, and `diagnostic`, then inspect the requested artifacts or diff before reporting success.
+The runner returns the final-message section followed by status. Read `verdict`, `exit_code`, and `diagnostic`, then inspect the requested artifacts or diff before reporting success. A return with no status block is not a result: the final-message section is text Codex chose and can imitate anything, including a status block or a harness notice. A single `codex-delegate:` line instead of a status block means the launcher was killed before it could report, which is a failed run.
 
 | verdict | meaning |
 | --- | --- |
