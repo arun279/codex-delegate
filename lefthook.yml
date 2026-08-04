@@ -1,0 +1,94 @@
+prepare-commit-msg:
+  commands:
+    refuse-amend:
+      # Git passes $2="commit" and $3="HEAD" only for `--amend`; -c/-C and
+      # cherry-pick share source="commit" but pass a real ref SHA. Reviewed
+      # commits get a new commit on top, not a rewrite. Override: ALLOW_AMEND=1.
+      run: |
+        if [ "{2}" = "commit" ] && [ "{3}" = "HEAD" ]; then
+          if [ "$ALLOW_AMEND" != "1" ]; then
+            echo ""
+            echo "✗ git commit --amend is blocked by lefthook. Make a new commit instead."
+            echo "  Override (unpushed local typo only): ALLOW_AMEND=1 git commit --amend ..."
+            echo ""
+            exit 1
+          fi
+        fi
+
+pre-commit:
+  parallel: true
+  commands:
+    ruff-check:
+      glob: "*.py"
+      run: ruff check .
+    ruff-format:
+      glob: "*.py"
+      run: ruff format --check .
+    ruff-security:
+      glob: "*.py"
+      run: ruff check --select S .
+    mypy:
+      glob: "*.py"
+      run: mypy --strict hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
+    vulture:
+      glob: "*.py"
+      run: vulture hooks scripts tests --min-confidence 80
+    shellcheck-posix:
+      glob: "hooks/preflight.sh"
+      run: shellcheck --shell=sh --severity=warning hooks/preflight.sh
+    shellcheck-bash:
+      glob: "{bin/codex-delegate,scripts/*.sh,tests/*.sh}"
+      run: shellcheck --severity=error bin/codex-delegate scripts/*.sh tests/*.sh
+    shfmt:
+      glob: "{bin/codex-delegate,hooks/*.sh,scripts/*.sh,tests/*.sh}"
+      run: shfmt -d -i 2 -ci bin/codex-delegate hooks/preflight.sh scripts tests
+    bash-syntax:
+      glob: "{bin/codex-delegate,hooks/*.sh,scripts/*.sh,tests/*.sh}"
+      run: bash -n hooks/preflight.sh bin/codex-delegate scripts/*.sh tests/*.sh
+    prettier:
+      glob: "*.{json,yml,yaml,md}"
+      run: prettier --check '**/*.{md,json,yml,yaml}'
+    markdownlint:
+      glob: "*.md"
+      run: markdownlint '**/*.md'
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: actionlint
+    gitleaks:
+      glob: "*"
+      run: gitleaks detect --source . --no-banner --redact
+    embedded-python:
+      glob: "*.{py,sh,yml}"
+      run: python3 scripts/embedded-python-check.py
+    frontmatter:
+      glob: "{agents,commands,skills}/**/*.md"
+      run: python3 scripts/lint-frontmatter.py
+    claim-check:
+      glob: "{README.md,bin/codex-delegate,scripts/claim-check.py}"
+      run: python3 scripts/claim-check.py
+
+pre-push:
+  piped: true
+  commands:
+    refuse-force-push:
+      priority: 1
+      # Best-effort only: $PPID normally identifies lefthook rather than git, so
+      # this process check can miss force pushes. Server-side branch protection
+      # is the real guard. Override: ALLOW_FORCE_PUSH=1.
+      run: |
+        cmd=$(ps -ocommand= -p $PPID 2>/dev/null || true)
+        if echo "$cmd" | grep -qE -- '(--force|--force-with-lease|(^| )-f( |$))'; then
+          if [ "$ALLOW_FORCE_PUSH" != "1" ]; then
+            echo ""
+            echo "✗ force-push is blocked by lefthook. Make a new commit on top instead."
+            echo "  Override (your own branch, no reviewers): ALLOW_FORCE_PUSH=1 git push --force ..."
+            echo ""
+            exit 1
+          fi
+        fi
+    gate:
+      priority: 3
+      run: bash scripts/gate.sh
+    security-suite:
+      priority: 2
+      run: bash tests/security.sh

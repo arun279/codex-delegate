@@ -1,0 +1,183 @@
+#!/bin/bash
+# Public launcher contract for the reduced blocking-only surface.
+set -uo pipefail
+
+ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+BIN=$ROOT/bin/codex-delegate
+TMP_BASE=${TMPDIR:-/tmp}
+WORK=$(mktemp -d "${TMP_BASE%/}/codex-delegate-run.XXXXXX") || {
+  echo "run suite: temporary directory creation failed" >&2
+  exit 2
+}
+WORK=$(cd -- "$WORK" && pwd -P) || exit 2
+trap 'rm -rf -- "$WORK"' EXIT INT TERM HUP
+
+mkdir -p "$WORK/home" "$WORK/runs" "$WORK/job" "$WORK/extra" || exit 2
+printf '{"type":"object"}\n' >"$WORK/schema.json"
+export HOME=$WORK/home
+export CODEX_DELEGATE_HOME=$WORK/runs
+export PATH=$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin
+
+PASS=0
+FAIL=0
+ok() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$*"; }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$*"; }
+check() { if eval "$1"; then ok "$2"; else bad "$2 [$1]"; fi; }
+head_() { printf '\n== %s\n' "$*"; }
+json_() {
+  python3 -c 'import json,sys; value=json.load(open(sys.argv[1])); [value:=value[key] for key in sys.argv[2].split(".")]; print(json.dumps(value))' "$1" "$2"
+}
+
+run_case() {
+  local mode=$1 runid=$2 expected=$3 rc
+  STUB_MODE=$mode "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+    --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+    --runid "$runid" >"$WORK/$runid.out" 2>"$WORK/$runid.err"
+  rc=$?
+  check '[ "$rc" = "$expected" ]' "$runid exits $expected (got $rc)"
+  check '[ -f "$WORK/runs/$runid/status.json" ]' "$runid writes one status record"
+  check '[ "$(json_ "$WORK/runs/$runid/status.json" exit_code)" = "$expected" ]' \
+    "$runid status exit matches the command"
+}
+
+printf 'Prompt body with $(), backticks `x`, quotes, and CODEX_DELEGATE_PROMPT_EOF.\n' >"$WORK/prompt.txt"
+
+head_ "two-command surface"
+"$BIN" --help >"$WORK/help.out" 2>&1
+RC=$?
+check '[ "$RC" = 0 ]' "top-level help exits 0"
+check 'grep -q "{run,models}" "$WORK/help.out"' "help exposes run and models"
+check '! grep -Eq "^[[:space:]]+(start|wait|status|reap)[[:space:]]" "$WORK/help.out" &&
+       ! grep -Eq "review|computer-use" "$WORK/help.out"' \
+  "help omits every retired command and mode"
+"$BIN" start >"$WORK/start.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "invalid choice" "$WORK/start.out"' "start is not dispatched"
+"$BIN" run --mode review --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+  >"$WORK/review.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "unrecognized arguments: --mode review" "$WORK/review.out"' \
+  "review mode is not accepted"
+
+head_ "live model catalog"
+"$BIN" models >"$WORK/models.out" 2>"$WORK/models.err"
+RC=$?
+check '[ "$RC" = 0 ] && head -1 "$WORK/models.out" | grep -q $'"'"'^slug\tdefault_effort\treasoning_efforts$'"'"'' \
+  "models prints one compact live-catalog table"
+check 'grep -q $'"'"'^gpt-5.6-sol\tmedium\tlow,medium,high,xhigh,max,ultra$'"'"' "$WORK/models.out"' \
+  "models reports the supported pair"
+STUB_CATALOG_MODE=minimal "$BIN" models >"$WORK/models-minimal.out" 2>&1
+RC=$?
+check '[ "$RC" = 0 ] && grep -q $'"'"'^minimal-model\tbespoke\tbespoke$'"'"' "$WORK/models-minimal.out"' \
+  "an honest minimal catalog remains usable"
+STUB_CATALOG_MODE=invalid "$BIN" models >"$WORK/models-invalid.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "no efforts for broken-model" "$WORK/models-invalid.out"' \
+  "an invalid catalog fails instead of dropping entries"
+STUB_CATALOG_MODE=fail "$BIN" models >"$WORK/models-fail.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "exit 75" "$WORK/models-fail.out"' \
+  "an unavailable live catalog fails instead of degrading"
+
+head_ "argument validation"
+"$BIN" run --prompt-file "$WORK/prompt.txt" >"$WORK/no-sandbox.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q -- "--sandbox" "$WORK/no-sandbox.out"' \
+  "sandbox selection is required"
+"$BIN" run --sandbox read-only >"$WORK/no-prompt.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q -- "--prompt-stdin" "$WORK/no-prompt.out"' \
+  "exactly one prompt source is required"
+"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --deadline 0 \
+  >"$WORK/deadline.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "between 1 and 12960" "$WORK/deadline.out"' \
+  "deadline validation is bounded"
+"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --network \
+  >"$WORK/network.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "requires --sandbox workspace-write" "$WORK/network.out"' \
+  "network is limited to workspace-write"
+"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --model missing \
+  >"$WORK/model.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "not in the live catalog" "$WORK/model.out"' \
+  "an unknown model is rejected before allocation"
+"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --model gpt-5.6-sol \
+  --effort impossible >"$WORK/effort.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "not supported" "$WORK/effort.out"' \
+  "an unsupported model-effort pair is rejected"
+"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --runid ../escape \
+  >"$WORK/runid.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && [ ! -e "$WORK/escape" ]' "a traversing run id is rejected"
+
+head_ "native exec invocation and prompt integrity"
+STUB_ARGV_CAPTURE=$WORK/argv.txt STUB_STDIN_CAPTURE=$WORK/stdin.txt STUB_MODE=ok \
+  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox workspace-write --network \
+  --cwd "$WORK/job" --add-dir "$WORK/extra" --schema "$WORK/schema.json" \
+  --deadline 10 --model gpt-5.6-sol --effort high --runid argv \
+  >"$WORK/argv.out" 2>"$WORK/argv.err"
+RC=$?
+check '[ "$RC" = 0 ] && cmp -s "$WORK/prompt.txt" "$WORK/stdin.txt"' \
+  "prompt bytes reach Codex only through stdin"
+check 'grep -Fxq "mode=exec" "$WORK/argv.txt" && grep -Fxq "json=true" "$WORK/argv.txt" &&
+       grep -Fxq "model=gpt-5.6-sol" "$WORK/argv.txt" && grep -Fxq "effort=high" "$WORK/argv.txt"' \
+  "Codex receives exec, JSON, model, and effort"
+check 'grep -Fxq "sandbox=workspace-write" "$WORK/argv.txt" && grep -Fxq "network=enabled" "$WORK/argv.txt" &&
+       grep -Fxq "cwd=$WORK/job" "$WORK/argv.txt" && grep -Fxq "process_cwd=$WORK/job" "$WORK/argv.txt"' \
+  "Codex receives the canonical cwd, sandbox, and network posture"
+check 'grep -Fxq "add_dir=$WORK/extra" "$WORK/argv.txt" && grep -Fxq "schema=$WORK/schema.json" "$WORK/argv.txt"' \
+  "native add-dir and output-schema flags survive"
+check '! grep -Fq "Prompt body" "$WORK/argv.txt"' "prompt text is absent from captured argv"
+
+head_ "terminal event and status contract"
+run_case ok completed 0
+RD=$WORK/runs/completed
+check '[ "$(json_ "$RD/status.json" verdict)" = '"'"'"COMPLETED"'"'"' ]' "completed verdict is exact"
+check 'grep -q "STUB FINAL MESSAGE" "$WORK/completed.out"' "blocking run returns the final message"
+FINAL_LINE=$(grep -n '^--- FINAL MESSAGE' "$WORK/completed.out" | cut -d: -f1)
+STATUS_LINE=$(grep -n '^--- STATUS' "$WORK/completed.out" | cut -d: -f1)
+check '[ "$FINAL_LINE" -lt "$STATUS_LINE" ]' "final message precedes status"
+check 'python3 -c '"'"'import json,sys; expected={"schema_version","runid","verdict","exit_code","diagnostic","signal","model","effort","sandbox","deadline_s","duration_s","process_exit_code","terminal_event","final_message_path","events_path","stderr_path"}; actual=set(json.load(open(sys.argv[1]))); raise SystemExit(actual != expected)'"'"' "$RD/status.json"' \
+  "status has exactly the reduced 16-field schema"
+check '[ "$(stat -f %Lp "$RD/status.json")" = 400 ]' "status is published read-only"
+check '[ "$(json_ "$RD/status.json" terminal_event)" = '"'"'"turn.completed"'"'"' ] &&
+       python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["final_message_path"] != sys.argv[2])'"'"' "$RD/status.json" "$RD/final.txt"' \
+  "terminal type and final path are actionable"
+
+run_case fail failed 10
+check '[ "$(json_ "$WORK/runs/failed/status.json" verdict)" = '"'"'"FAILED"'"'"' ] &&
+       [ "$(json_ "$WORK/runs/failed/status.json" diagnostic)" = '"'"'"stub was told to fail"'"'"' ]' \
+  "turn.failed preserves its diagnostic"
+run_case duplicate_terminal duplicate 17
+check '[ "$(json_ "$WORK/runs/duplicate/status.json" diagnostic)" = '"'"'"duplicate_terminal_event"'"'"' ]' \
+  "duplicate terminal events fail deterministically"
+run_case malformed malformed 17
+check '[ "$(json_ "$WORK/runs/malformed/status.json" diagnostic)" = '"'"'"malformed_event_record"'"'"' ]' \
+  "malformed JSON cannot become success"
+run_case truncated truncated 17
+check '[ "$(json_ "$WORK/runs/truncated/status.json" diagnostic)" = '"'"'"truncated_event_record"'"'"' ]' \
+  "a truncated suffix cannot become success"
+run_case no_terminal no-terminal 21
+check '[ "$(json_ "$WORK/runs/no-terminal/status.json" verdict)" = '"'"'"NO_TERMINAL_EVENT"'"'"' ]' \
+  "process exit without a terminal event is distinct"
+run_case no_final no-final 23
+check '[ "$(json_ "$WORK/runs/no-final/status.json" verdict)" = '"'"'"OUTPUT_MISSING"'"'"' ]' \
+  "completion without final output is distinct"
+run_case process_exit process-exit 0
+check '[ "$(json_ "$WORK/runs/process-exit/status.json" process_exit_code)" = 7 ]' \
+  "terminal evidence remains authoritative while process exit stays diagnostic"
+
+head_ "run storage trust boundary"
+MODE=$(stat -f %Lp "$WORK/runs")
+check '[ "$MODE" = 700 ]' "run storage is owner-only"
+CODEX_DELEGATE_HOME=$WORK/job/control "$BIN" run --prompt-file "$WORK/prompt.txt" \
+  --sandbox workspace-write --cwd "$WORK/job" >"$WORK/overlap.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "overlaps writable root" "$WORK/overlap.out"' \
+  "workspace-write cannot overlap launcher control state"
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+exit $((FAIL > 0))

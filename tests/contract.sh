@@ -1,0 +1,113 @@
+#!/bin/bash
+# Deterministic contract checks for the runner, routing docs, hooks, and release wiring.
+set -uo pipefail
+
+ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+WORKFLOW_LINT=$ROOT/hooks/guard-workflow.py
+SKILL=$ROOT/skills/routing/SKILL.md
+RUNNER=$ROOT/agents/runner.md
+STATUS_REF=$ROOT/skills/routing/reference/status-and-trust.md
+README=$ROOT/README.md
+SECURITY=$ROOT/SECURITY.md
+UNINSTALL=$ROOT/commands/uninstall.md
+HOOKS=$ROOT/hooks/hooks.json
+GATE=$ROOT/scripts/gate.sh
+LEFTHOOK=$ROOT/lefthook.yml
+CI=$ROOT/.github/workflows/ci.yml
+TMP_BASE=${TMPDIR:-/tmp}
+WORK=$(mktemp -d "${TMP_BASE%/}/codex-delegate-contract.XXXXXX") || exit 2
+trap 'rm -rf -- "$WORK"' EXIT INT TERM HUP
+
+PASS=0
+FAIL=0
+ok() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$*"; }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$*"; }
+check() { if eval "$1"; then ok "$2"; else bad "$2 [$1]"; fi; }
+
+workflow_inline_() {
+  WORKFLOW_OUT=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Workflow","tool_input":{"script":sys.argv[1]}}))' "$1" \
+    | python3 "$WORKFLOW_LINT")
+  WORKFLOW_RC=$?
+}
+workflow_denies_() {
+  [ "$WORKFLOW_RC" = 0 ] && printf '%s\n' "$WORKFLOW_OUT" | grep -q '"permissionDecision": "deny"'
+}
+workflow_allows_() { [ "$WORKFLOW_RC" = 0 ] && [ -z "$WORKFLOW_OUT" ]; }
+
+printf '\n== Workflow call boundary\n'
+workflow_inline_ "agent({agentType:'codex-delegate:runner',label:'codex:test',prompt:'work'})"
+check 'workflow_denies_ && printf "%s" "$WORKFLOW_OUT" | grep -Fq "agent(prompt: string, opts?:"' \
+  "object-form agent call is denied with the real signature"
+workflow_inline_ "agent(['===ARGS===','--sandbox workspace-write --cwd /abs/path --deadline 7200','===PROMPT===','work'].join('\\n'),{agentType:'codex-delegate:runner',label:'codex:test',phase:'Test'})"
+check 'workflow_allows_' "prompt-first runner call is allowed"
+workflow_inline_ "agent('',{agentType:'codex-delegate:runner',label:'codex:test'})"
+check 'workflow_denies_' "empty runner prompt is denied"
+workflow_inline_ "agent(undefined,{agentType:'codex-delegate:runner',label:'codex:test'})"
+check 'workflow_denies_' "missing runner prompt is denied"
+workflow_inline_ "agent('work',{agentType:'codex-delegate:runner',label:'codex:test',model:'sonnet',effort:'high'})"
+check 'workflow_denies_' "call-site wrapper model and effort are denied"
+workflow_inline_ "agent('',{agentType:'another:runner',label:'other:test'})"
+check 'workflow_allows_' "another agent type remains outside this policy"
+
+printf '\n== documented runner contract\n'
+awk '
+  /^```js[[:space:]]*$/ { inside=1; next }
+  inside && /^```[[:space:]]*$/ { inside=0; print ""; next }
+  inside { print }
+' "$SKILL" >"$WORK/js-blocks.txt"
+check '[ -s "$WORK/js-blocks.txt" ] && grep -q "await agent(" "$WORK/js-blocks.txt"' \
+  "routing skill includes executable Workflow syntax"
+check 'perl -0ne '"'"'exit 1 if /agent\s*\(\s*\{/s'"'"' "$WORK/js-blocks.txt"' \
+  "no JavaScript example puts an object in the prompt slot"
+check 'grep -q "===ARGS===" "$RUNNER" && grep -q "===PROMPT===" "$RUNNER" &&
+       grep -q "non-empty" "$RUNNER" && grep -q "1 through 12,960" "$RUNNER" &&
+       grep -q "backgrounds" "$RUNNER" && grep -q "same agent" "$RUNNER"' \
+  "runner validates its complete envelope before Bash"
+check 'grep -q "Make one Bash call" "$RUNNER" && grep -q "codex-delegate run" "$RUNNER" &&
+       ! grep -q "codex-delegate start\|codex-delegate wait\|codex-delegate status\|codex-delegate reap" "$RUNNER"' \
+  "runner has exactly one blocking launcher operation"
+check 'grep -q "Environment variables do not override" "$SKILL" &&
+       ! grep -q "CODEX_DELEGATE_MODEL\|CODEX_DELEGATE_EFFORT\|bundled" "$SKILL"' \
+  "skill documents only live-catalog selection"
+
+printf '\n== reduced surface documentation\n'
+DOCS="$README $SKILL $STATUS_REF $SECURITY $UNINSTALL"
+check '! grep -Eq -- "--mode([^l]|$)|--base([^[:alnum:]-]|$)|--commit([^[:alnum:]-]|$)|--uncommitted([^[:alnum:]-]|$)|--lane([^[:alnum:]-]|$)" $DOCS' \
+  "retired flags are absent from user documentation"
+check '! grep -Eq "codex-delegate (start|wait|status|reap)" $DOCS' \
+  "retired subcommands are absent from user documentation"
+check '! grep -Eq "metadata_tampered|observed_pid_birth_ledger|survivors|terminal\.json|sentinel|catalog_degraded" $DOCS' \
+  "retired status and attribution fields are absent"
+check 'grep -q "exactly 16 fields" "$README" && grep -q "exactly 16 fields" "$STATUS_REF"' \
+  "README and status reference agree on schema size"
+check 'grep -q "different process group or session" "$README" &&
+       grep -q "creates another process" "$SECURITY" && grep -q "group or session" "$SECURITY"' \
+  "process-group cleanup limit is stated plainly"
+check 'grep -q "danger-full-access" "$STATUS_REF" && grep -q "tamper-proof attestation" "$STATUS_REF"' \
+  "status reference states the same-user trust boundary"
+check 'grep -q "background lifecycle command" "$UNINSTALL" &&
+       ! grep -q "reap\|supervisor.pid\|survivors.txt" "$UNINSTALL"' \
+  "uninstall matches the foreground-only architecture"
+
+printf '\n== hooks and release wiring\n'
+check 'python3 -c '"'"'import json,sys; json.load(open(sys.argv[1]))'"'"' "$HOOKS" &&
+       ! grep -q "SessionEnd\|session-end" "$HOOKS" && [ ! -e "$ROOT/hooks/session-end.py" ]' \
+  "hook manifest installs no background end-of-session process"
+check '! grep -q "command -v perl\|computer-use\|session-end" "$ROOT/hooks/preflight.sh"' \
+  "preflight checks only current runtime dependencies"
+check 'grep -q "run_step .*contract suite.*tests/contract.sh" "$GATE" &&
+       grep -q "run_step .*security suite.*tests/security.sh" "$GATE" &&
+       grep -q "run_step .*run suite.*tests/run.sh" "$GATE" &&
+       grep -q "run_step .*lifecycle suite.*tests/lifecycle.sh" "$GATE" &&
+       grep -q "run_step .*corpus replay" "$GATE" && grep -q "run_step .*determinism" "$GATE"' \
+  "release gate retains every required suite, corpus, and determinism check"
+check 'grep -q "run: bash scripts/gate.sh" "$LEFTHOOK"' \
+  "lefthook reaches the release gate"
+check 'grep -q "runs-on: macos-latest" "$CI" && grep -q "run: bash scripts/gate.sh" "$CI"' \
+  "macOS CI reaches the release gate"
+check '[ -f "$ROOT/hooks/guard-bash.py" ] && [ -d "$ROOT/tests/corpus" ] &&
+       [ -f "$ROOT/scripts/privacy-scan.py" ] && [ -f "$ROOT/scripts/gate.sh" ]' \
+  "guard, corpus, privacy scanner, and release gate remain present"
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+exit $((FAIL > 0))
