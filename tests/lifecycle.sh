@@ -29,8 +29,14 @@ export PATH=$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin
 
 PASS=0
 FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$*"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$*"; }
+ok() {
+  PASS=$((PASS + 1))
+  printf '  ok   %s\n' "$*"
+}
+bad() {
+  FAIL=$((FAIL + 1))
+  printf '  FAIL %s\n' "$*"
+}
 check() { if eval "$1"; then ok "$2"; else bad "$2 [$1]"; fi; }
 head_() { printf '\n== %s\n' "$*"; }
 json_() {

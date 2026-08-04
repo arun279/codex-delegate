@@ -5,8 +5,15 @@ set -uo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 BIN=$ROOT/bin/codex-delegate
 N=${DETERMINISM_RUNS:-${1:-5}}
-case "$N" in ''|*[!0-9]*) echo "determinism: run count must be an integer >= 2" >&2; exit 2 ;; esac
-[ "$N" -ge 2 ] || { echo "determinism: run count must be >= 2" >&2; exit 2; }
+case "$N" in '' | *[!0-9]*)
+  echo "determinism: run count must be an integer >= 2" >&2
+  exit 2
+  ;;
+esac
+[ "$N" -ge 2 ] || {
+  echo "determinism: run count must be >= 2" >&2
+  exit 2
+}
 
 TMP_BASE=${TMPDIR:-/tmp}
 WORK=$(mktemp -d "${TMP_BASE%/}/codex-delegate-determinism.XXXXXX") || exit 2
