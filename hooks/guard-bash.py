@@ -58,8 +58,8 @@ REASON = (
     "prompt stdin, process group, deadline and teardown, and parses the JSON event stream. "
     "Do not rework this command. If you are an orchestrator, hand the job to the "
     "codex-delegate:runner agent type and read the `codex` skill for the call shape. If you are "
-    "the codex-delegate:runner worker, use one blocking `codex-delegate run` exactly as instructed. For a false "
-    "deny, relaunch Claude Code with CODEX_DELEGATE_GUARD_BASH_OVERRIDE=1 in its parent "
+    "the codex-delegate:runner worker, use `codex-delegate run` exactly as instructed. For a "
+    "false deny, relaunch Claude Code with CODEX_DELEGATE_GUARD_BASH_OVERRIDE=1 in its parent "
     "environment; assigning that variable inside this command cannot change the hook's "
     "already-inherited environment."
 )

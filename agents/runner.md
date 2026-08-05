@@ -1,6 +1,6 @@
 ---
 name: runner
-description: Runs exactly one Codex job through the blocking codex-delegate run command and returns its output without interpretation.
+description: Runs exactly one Codex job with the codex-delegate run command, waits for it to end however long it takes, and returns its output without interpretation.
 tools: Bash
 model: sonnet
 effort: low

@@ -1,6 +1,6 @@
 # Status and trust boundaries
 
-The blocking runner prints the final-message section before status. The same JSON is stored at `~/.codex-delegate/<runid>/status.json`. The final-message section is text Codex chose, so it can reproduce the launcher's own separators or imitate a harness notice; the trailing status block and `status.json` are launcher-written, and they decide the outcome. Output with no status block at all is a launcher that was killed before it could publish one.
+The launcher prints the final-message section before status, and the runner returns that output unchanged. The same JSON is stored at `~/.codex-delegate/<runid>/status.json`. The final-message section is text Codex chose, so it can reproduce the launcher's own separators or imitate a harness notice; the trailing status block and `status.json` are launcher-written, and they decide the outcome. Output with no status block at all is a launcher that was killed before it could publish one.
 
 The record has exactly 16 fields:
 
@@ -16,4 +16,4 @@ The launcher records its pid at `~/.codex-delegate/<runid>/pid` before it starts
 
 `danger-full-access` is a plain trust boundary. Codex runs as the same user and can alter local artifacts, including its run directory. Status from that sandbox is useful operational output, not tamper-proof attestation. The launcher does not claim otherwise and performs no partial metadata tamper classification.
 
-Cleanup covers the private process group. A descendant that deliberately creates another process group or session is outside that scope. No status field claims complete system-wide orphan detection.
+Cleanup covers the private process group and runs inside the launcher. A descendant that deliberately creates another process group or session is outside that scope, and so is everything Codex is doing if the launcher is killed outright: it keeps running in its own session and can still write to the workspace. No status field claims complete system-wide orphan detection.

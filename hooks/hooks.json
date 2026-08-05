@@ -1,5 +1,5 @@
 {
-  "description": "Routes delegated Codex turns through one blocking launcher and checks the machine can run it.",
+  "description": "Routes delegated Codex turns through one launcher run and checks the machine can run it.",
   "hooks": {
     "PreToolUse": [
       {
