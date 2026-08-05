@@ -1,5 +1,5 @@
 #!/bin/bash
-# codex-delegate: one blocking Codex turn with bounded process-group cleanup.
+# codex-delegate: one foreground Codex turn with bounded process-group cleanup.
 set -uo pipefail
 
 # Preserve the caller's stdin on fd 3. Python source occupies stdin itself.

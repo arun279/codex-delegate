@@ -5,7 +5,7 @@ description: Remove codex-delegate run artifacts and its obsolete permission set
 
 # Clean up codex-delegate before unregistering it
 
-Jobs are blocking foreground calls, so there is no background lifecycle command to run.
+The launcher has no detached mode and keeps no job registry, so there is no background lifecycle command to run.
 
 Follow these steps exactly:
 

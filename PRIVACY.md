@@ -16,7 +16,7 @@ The selected sandbox bounds local access:
 
 Each run stores owner-only artifacts under `~/.codex-delegate/<runid>/`:
 
-- `pid`, the launcher's own process id, so a blocked caller can wait on the process;
+- `pid`, the launcher's own process id, so a waiting caller can watch the process;
 - `prompt.txt`, containing the complete prompt;
 - `events.jsonl`, containing the bounded Codex JSON event stream;
 - `stderr.log`;

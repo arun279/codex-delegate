@@ -16,7 +16,7 @@ It starts Codex on your machine with a sandbox you choose for each run. Its hook
 
 **`danger-full-access` can alter local evidence.** Codex runs as the same user and can reach the run directory, final message, event file, and status path. The launcher writes status only after cleanup and derives the terminal event from bytes it consumed directly, but this is not attestation against a same-user process. Treat status from this sandbox as operational output.
 
-**Process cleanup owns one private process group.** Codex and ordinary descendants inherit that group. On terminal event, deadline, HUP, INT, or TERM, the launcher sends INT, TERM, and then KILL as needed and waits for the group to disappear. A descendant that deliberately creates another process group or session is outside this boundary. There is no PID ledger, historical reaper, or claim of system-wide orphan detection.
+**Process cleanup owns one private process group.** Codex and ordinary descendants inherit that group. On terminal event, deadline, HUP, INT, or TERM, the launcher sends INT, TERM, and then KILL as needed, waiting a short bounded grace after each for the group to disappear; a group still present after the whole ladder is reported as `CLEANUP_FAILED`. A descendant that deliberately creates another process group or session is outside this boundary, and so is every Codex process still running when the launcher is itself killed with KILL, because cleanup runs in the launcher. There is no PID ledger, historical reaper, or claim of system-wide orphan detection.
 
 **Requested model identity is not service attestation.** The launcher validates the requested model and effort against Codex's live catalog. It cannot prove which model the service ultimately used.
 

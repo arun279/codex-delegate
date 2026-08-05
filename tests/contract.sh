@@ -72,7 +72,7 @@ check 'grep -q "===ARGS===" "$RUNNER" && grep -q "===PROMPT===" "$RUNNER" &&
   "runner validates its complete envelope before Bash"
 check '[ "$(grep -c "^codex-delegate run" "$RUNNER")" = 1 ] &&
        ! grep -q "codex-delegate start\|codex-delegate wait\|codex-delegate status\|codex-delegate reap" "$RUNNER"' \
-  "runner has exactly one blocking launcher operation"
+  "runner has exactly one launcher operation"
 check 'grep -q "Environment variables do not override" "$SKILL" &&
        ! grep -q "CODEX_DELEGATE_MODEL\|CODEX_DELEGATE_EFFORT\|bundled" "$SKILL"' \
   "skill documents only live-catalog selection"
@@ -87,6 +87,8 @@ check '! grep -Eq "metadata_tampered|observed_pid_birth_ledger|survivors|termina
   "retired status and attribution fields are absent"
 check 'grep -q "exactly 16 fields" "$README" && grep -q "exactly 16 fields" "$STATUS_REF"' \
   "README and status reference agree on schema size"
+check 'grep -q "resolves once" "$README" && grep -q "resolves once" "$SKILL"' \
+  "both entry points still tell a Workflow author the call resolves once"
 check 'grep -q "different process group or session" "$README" &&
        grep -q "creates another process" "$SECURITY" && grep -q "group or session" "$SECURITY"' \
   "process-group cleanup limit is stated plainly"
@@ -94,7 +96,7 @@ check 'grep -q "danger-full-access" "$STATUS_REF" && grep -q "tamper-proof attes
   "status reference states the same-user trust boundary"
 check 'grep -q "background lifecycle command" "$UNINSTALL" &&
        ! grep -q "reap\|supervisor.pid\|survivors.txt" "$UNINSTALL"' \
-  "uninstall matches the foreground-only architecture"
+  "uninstall stays cleanup only, with no job lifecycle surface of its own"
 
 printf '\n== hooks and release wiring\n'
 check 'python3 -c '"'"'import json,sys; json.load(open(sys.argv[1]))'"'"' "$HOOKS" &&

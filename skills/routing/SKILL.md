@@ -5,7 +5,7 @@ description: Route bounded coding, investigation, analysis, and independent revi
 
 # Codex
 
-Use `codex-delegate:runner` to send exactly one bounded job to Codex. Decide whether to delegate, choose the Codex model and effort, supply a self-contained prompt, and judge the result. The runner owns the single blocking launcher call. Never run `codex exec` directly.
+Use `codex-delegate:runner` to send exactly one bounded job to Codex. Decide whether to delegate, choose the Codex model and effort, supply a self-contained prompt, and judge the result. The runner owns the launcher call and the wait on it. Never run `codex exec` directly.
 
 ## Route the work
 
@@ -55,7 +55,7 @@ await agent(
 - Make `promptBody` non-empty and self-contained. Include the absolute repo path, goal, acceptance criteria, boundaries, required checks, and required report.
 - Always pass an explicit sandbox and a deadline from 1 through 12,960. The launcher defaults to 7,200 seconds when called directly, but the runner rejects an absent or invalid value before Bash starts.
 
-The runner starts exactly one launcher run, as a background Bash call so that no Codex turn is bounded by a Bash timeout, and then holds its own turn by waiting on the launcher process, one bounded call per turn, until that process ends. The launcher's own deadline still bounds the run. Do not add polling, retrying, or a second launcher call of your own.
+The runner starts exactly one launcher run, as a background Bash call so that no Codex turn is bounded by a Bash timeout, and then holds its own turn by waiting on the launcher process, one bounded call per turn, until that process ends. The launcher's own deadline still bounds the run. None of that reaches the call site: `agent()` resolves once, with the launcher's output or with the single `codex-delegate:` line below. Do not add polling, retrying, or a second launcher call of your own, because the wait is already the runner's and a second one can only cut the job short or read text Codex was free to write.
 
 ## `===ARGS===` vocabulary
 
@@ -88,7 +88,7 @@ The runner returns the final-message section followed by status. Read `verdict`,
 | `PLATFORM_UNSUPPORTED` (18) | The host is not macOS. |
 | `NO_TERMINAL_EVENT` (21) | Codex exited without terminal evidence. |
 | `OUTPUT_MISSING` (23) | Codex completed without a final message. |
-| `STOPPED` (129/130/143) | The blocking caller received HUP, INT, or TERM and cleaned up the group. |
+| `STOPPED` (129/130/143) | The launcher received HUP, INT, or TERM and cleaned up the group. |
 
 Before relaying a finding, read its cited code. After implementation, inspect the diff and stop if the run touched unrelated files.
 

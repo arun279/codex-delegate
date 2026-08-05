@@ -1,6 +1,6 @@
 {
   "name": "arun279-plugins",
-  "description": "Claude Code plugins published by Arun Krishnamurthy, starting with codex-delegate for one-call blocking Codex jobs.",
+  "description": "Claude Code plugins published by Arun Krishnamurthy, starting with codex-delegate for bounded Codex jobs.",
   "owner": {
     "name": "Arun Krishnamurthy",
     "url": "https://github.com/arun279"
@@ -10,7 +10,7 @@
       "name": "codex-delegate",
       "source": "./",
       "category": "development",
-      "description": "Runs one OpenAI Codex CLI job from Claude Code through a blocking foreground launcher that validates the live model pair, owns the process group and deadline, reads the JSON terminal event, cleans up on completion or stop, and returns reduced status. Prompts and files Codex reads are sent to OpenAI. Broad PreToolUse hooks inspect Bash, Monitor, and Workflow call text; the PermissionRequest hook is inert. Requires macOS, Python 3, and a signed-in Codex CLI."
+      "description": "Delegate one coding task from Claude Code to Codex. A runner agent starts the launcher in the background and waits on that process until the job ends, so no Codex turn is bounded by a Bash timeout and the caller still gets one result. The launcher validates the live model pair, starts codex exec in a private process group, enforces a wall-clock deadline, reads the JSON terminal event, tears that group down, and returns the final message with reduced status. From a terminal it is one command that returns when the turn ends. Requires macOS, Python 3, and a signed-in Codex CLI. Prompts and files Codex reads are sent to OpenAI. Broad PreToolUse hooks inspect Bash, Monitor, and Workflow call text; the PermissionRequest hook is inert."
     }
   ]
 }

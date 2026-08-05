@@ -1,7 +1,7 @@
 {
   "name": "codex-delegate",
   "version": "0.1.2",
-  "description": "Delegate one coding task from Claude Code to Codex through a blocking foreground launcher. It validates the live model pair, starts codex exec in a private process group, enforces a wall-clock deadline, reads the JSON terminal event, cleans up on completion or stop, and returns the final message with reduced status. Requires macOS, Python 3, and a signed-in Codex CLI. Prompts and files Codex reads are sent to OpenAI. Broad PreToolUse hooks inspect Bash, Monitor, and Workflow call text; the PermissionRequest hook is inert.",
+  "description": "Delegate one coding task from Claude Code to Codex. A runner agent starts the launcher in the background and waits on that process until the job ends, so no Codex turn is bounded by a Bash timeout and the caller still gets one result. The launcher validates the live model pair, starts codex exec in a private process group, enforces a wall-clock deadline, reads the JSON terminal event, tears that group down, and returns the final message with reduced status. From a terminal it is one command that returns when the turn ends. Requires macOS, Python 3, and a signed-in Codex CLI. Prompts and files Codex reads are sent to OpenAI. Broad PreToolUse hooks inspect Bash, Monitor, and Workflow call text; the PermissionRequest hook is inert.",
   "author": {
     "name": "Arun Krishnamurthy",
     "url": "https://github.com/arun279"

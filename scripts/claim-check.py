@@ -12,6 +12,8 @@ from typing import cast
 ROOT = Path(__file__).resolve().parent.parent
 LAUNCHER = ROOT / "bin" / "codex-delegate"
 RUNNER = ROOT / "agents" / "runner.md"
+HOOKS = ROOT / "hooks" / "hooks.json"
+GUARD = ROOT / "hooks" / "guard-bash.py"
 DOCS = [
     ROOT / "README.md",
     RUNNER,
@@ -32,6 +34,11 @@ LAUNCHER_OVERHEAD_S = 60
 # The launcher call turn, then the report call and the reply that returns it.
 FIXED_TURNS = 3
 STATUS_SEPARATOR = "--- STATUS ---"
+BASH_BLOCK = re.compile(r"^```bash\n.*?^```$", re.DOTALL | re.MULTILINE)
+ONE_CALL = re.compile(r"\b(?:one|single)[ -](?:blocking|call)\b", re.IGNORECASE)
+BLOCKS = re.compile(r"\bblock(?:s|ing|ed)\b", re.IGNORECASE)
+DISPATCH = re.compile(r"\b(?:runner|caller|jobs?)\b|Claude Code", re.IGNORECASE)
+SENTENCE = re.compile(r"[^.\n]+")
 RETIRED_FLAGS = {"--mode", "--base", "--commit", "--uncommitted", "--lane"}
 RETIRED_COMMANDS = {"start", "wait", "status", "reap"}
 RETIRED_STATUS = {
@@ -195,6 +202,35 @@ def runner_wait_contract(source: str, runner: str) -> list[str]:
     return problems
 
 
+def dispatch_claims(runner: str, texts: dict[str, str]) -> list[str]:
+    """Fail on shipped text that still describes dispatch from Claude Code as one blocking call.
+
+    The runner starts the launcher in the background and then holds its turn on the launcher pid,
+    a shape the wait contract above pins and scripts/runner-protocol-check.py executes. A direct
+    `codex-delegate run` does still block, so this is not a ban on the word: an occurrence is a
+    dispatch claim only when its own sentence also names the runner, the caller, a job, or Claude
+    Code. "one call" is refused wherever it appears, including where a call site really does make
+    one: it is the exact phrase that shipped false, and "resolves once" says the true thing without
+    inviting the old reading. bin/codex-delegate is out of scope because it is the code these
+    claims are measured against, and CHANGELOG.md because a changelog has to be able to name the
+    shape a release left.
+    """
+    calls = len(BASH_BLOCK.findall(runner))
+    problems: list[str] = []
+    for label, text in texts.items():
+        for sentence in SENTENCE.findall(text):
+            claim = ONE_CALL.search(sentence) or (
+                BLOCKS.search(sentence) if DISPATCH.search(sentence) else None
+            )
+            if claim is not None:
+                problems.append(
+                    f"{label} calls dispatch {claim.group(0)!r} in "
+                    f"{' '.join(sentence.split())[:64]!r}, but the runner prescribes {calls} "
+                    "Bash calls and waits on the launcher process"
+                )
+    return problems
+
+
 def inline_tokens(text: str) -> set[str]:
     return set(re.findall(r"`([A-Za-z_][A-Za-z0-9_.-]*|--[a-z][a-z0-9-]*)`", text))
 
@@ -204,11 +240,31 @@ def main() -> int:
     source = python_source(shell)
     flags, commands, status_fields, exits = launcher_surface(source)
     documents = {path: path.read_text(encoding="utf-8") for path in DOCS}
-    joined = "\n".join(documents.values())
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    hooks = HOOKS.read_text(encoding="utf-8")
+    # Published copy is the first thing a stranger reads and was the last thing anything read.
+    entries = [str(item.get("description")) for item in market.get("plugins", [])]
+    listings = {
+        "package.json": str(package.get("description")),
+        ".claude-plugin/plugin.json": str(plugin.get("description")),
+        ".claude-plugin/marketplace.json": "\n".join([str(market.get("description")), *entries]),
+    }
+    joined = "\n".join([*documents.values(), *listings.values()])
     tokens = inline_tokens(joined)
     documented_flags = set(re.findall(r"--[a-z][a-z0-9-]*", joined)) - {"--version"}
     documented_status = status_fields & tokens
     problems = runner_wait_contract(source, documents[RUNNER])
+    problems += dispatch_claims(
+        documents[RUNNER],
+        {
+            **{str(path.relative_to(ROOT)): text for path, text in documents.items()},
+            **listings,
+            "hooks/hooks.json": hooks,
+            "hooks/guard-bash.py": GUARD.read_text(encoding="utf-8"),
+        },
+    )
 
     if commands != {"run", "models"}:
         problems.append(f"launcher commands are {sorted(commands)}, expected run and models")
@@ -239,11 +295,12 @@ def main() -> int:
         if required not in joined:
             problems.append(f"stop contract missing from docs: {required}")
 
-    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    if package.get("description") != plugin.get("description"):
-        problems.append("package and plugin descriptions differ")
-    hooks = (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    published = {listings["package.json"], listings[".claude-plugin/plugin.json"], *entries}
+    if len(published) != 1:
+        problems.append(
+            f"the npm, plugin, and marketplace descriptions are {len(published)} different "
+            "strings, so correcting the product only corrects some of them"
+        )
     if "SessionEnd" in hooks or (ROOT / "hooks" / "session-end.py").exists():
         problems.append("background session-end cleanup remains installed")
 

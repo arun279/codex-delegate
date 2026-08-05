@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The ver
 
 ### Added
 
-- Recorded the launcher pid in the run directory, so a caller blocked past the harness's Bash ceiling can wait on the process instead of a clock.
+- Recorded the launcher pid in the run directory, so a caller can wait on the process instead of a clock.
 - Added `scripts/runner-protocol-check.py` to the release gate. It executes the Bash `agents/runner.md` prescribes: three earlier wait prescriptions shipped without ever being run.
 
 ### Fixed
@@ -16,6 +16,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The ver
 - Ended that wait on the launcher process rather than on elapsed time, so a job that finishes early is returned at once and a launcher killed without publishing status is reported as a death instead of an empty success.
 - Started the launcher as a background Bash call. A foreground call is handed off alive only for some command shapes, and measurably kills the launcher otherwise: a bare command reached the ceiling and was backgrounded, while the same command behind a variable assignment was killed at 600s and left `verdict STOPPED, exit_code 143`. Backgrounding also puts the wait on the path every run takes rather than only runs past ten minutes.
 - Sized `maxTurns` so a wait call that loses its 600,000 ms timeout and dies at the 120 second default still cannot exhaust the budget before the deadline a run can reach.
+- Corrected every shipped claim that dispatch from Claude Code is a single blocking call, including the published npm and marketplace copy, which no check had ever read. `scripts/claim-check.py` now reads that copy with the rest of the documentation and rejects the claim while the runner waits on the launcher. The npm, plugin, and marketplace descriptions are now one string the check requires all three to carry.
+- Withdrew the promise that a run cannot outlive the agent that started it. Codex is started in its own session, so a launcher killed with `KILL` leaves it running: `tests/lifecycle.sh` now asserts that survival rather than quietly cleaning it up.
+- Said what `--deadline` bounds. It starts when Codex starts, so a `--deadline 1` command measured 7 seconds of wall clock behind a 5 second catalog lookup, and the teardown ladder runs after it expires.
+- Stopped describing process-group cleanup as unconditional. The ladder waits a bounded grace after each signal and reports `CLEANUP_FAILED` when the group is still there, which is why that verdict exists.
+- Named the fourth thing that ends a direct `run`, which the README had left out: Codex exiting without a terminal event, which returns `NO_TERMINAL_EVENT` at once rather than waiting for the deadline.
 
 ## [0.1.1] - 2026-08-03
 

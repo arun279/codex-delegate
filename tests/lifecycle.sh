@@ -99,7 +99,7 @@ check 'cmp -s "$WORK/terminal.expected" "$RD/final.txt" &&
        grep -q "TERMINAL BEFORE HANG" "$WORK/terminal.out"' \
   "a streamed final message survives a Codex process killed before it wrote one"
 
-head_ "the process handle a blocked caller waits on"
+head_ "the process handle a waiting caller holds"
 STUB_MODE=hold STUB_PID_CAPTURE=$WORK/handle.pid STUB_DESCENDANT_CAPTURE=$WORK/handle-child.pid \
   "$BIN" run "${run_args[@]}" --deadline 30 --runid lc-handle \
   >"$WORK/handle.out" 2>"$WORK/handle.err" &
@@ -119,6 +119,8 @@ check '! kill -0 "$(cat "$RD/pid")" 2>/dev/null' \
   "and stops answering after a kill the launcher cannot report"
 check '[ ! -e "$RD/status.json" ] && [ ! -s "$WORK/handle.out" ]' \
   "that kill leaves no status and no output, so silence is a death and not a result"
+check 'kill -0 "$CHILD" 2>/dev/null && kill -0 "$DESCENDANT" 2>/dev/null' \
+  "and leaves Codex running in its own session, because cleanup needs a live launcher"
 kill -KILL "$CHILD" 2>/dev/null
 kill -KILL "$DESCENDANT" 2>/dev/null
 
