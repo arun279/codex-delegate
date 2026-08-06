@@ -50,10 +50,10 @@ jobs:
         run: |
           grep -q "Apache License" LICENSE
           grep -q "Version 2.0" LICENSE
-          python3 scripts/embedded-python-check.py manifests
+          python3 scripts/release-invariants.py manifests
 
       - name: Version agreement
-        run: python3 scripts/embedded-python-check.py versions
+        run: python3 scripts/release-invariants.py versions
 
       - name: Shell syntax
         run: |
@@ -62,7 +62,7 @@ jobs:
           done
 
       - name: Python syntax
-        run: python3 -m py_compile hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
+        run: python3 -m py_compile bin/codex-delegate hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
         env:
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/codex-delegate-pycache
 
@@ -71,29 +71,26 @@ jobs:
       # accepts every one of them. --severity=warning is where shellcheck reports the SC3xxx
       # "undefined in POSIX sh" family, which is the only invocation that catches this.
       - name: Shellcheck
-        run: |
-          shellcheck --shell=sh --severity=warning hooks/preflight.sh
-          shellcheck --severity=error bin/codex-delegate
+        run: shellcheck --shell=sh --severity=warning hooks/preflight.sh
 
       - name: Frontmatter
         run: python3 scripts/lint-frontmatter.py
 
       - name: Static release checks
         run: |
-          ruff check .
-          ruff format --check .
-          ruff check --select S .
-          mypy --strict hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
-          vulture hooks scripts tests --min-confidence 80
+          ruff check . bin/codex-delegate
+          ruff format --check . bin/codex-delegate
+          ruff check --select S . bin/codex-delegate
+          mypy --strict bin/codex-delegate hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
+          vulture bin/codex-delegate hooks scripts tests --min-confidence 80
           shellcheck --shell=sh --severity=warning hooks/preflight.sh
-          shellcheck --severity=error bin/codex-delegate scripts/*.sh tests/*.sh
-          shfmt -d -i 2 -ci bin/codex-delegate hooks/preflight.sh scripts tests
-          bash -n hooks/preflight.sh bin/codex-delegate scripts/*.sh tests/*.sh
+          shellcheck --severity=error scripts/*.sh tests/*.sh
+          shfmt -d -i 2 -ci hooks/preflight.sh scripts tests
+          bash -n hooks/preflight.sh scripts/*.sh tests/*.sh
           markdownlint '**/*.md'
           prettier --check '**/*.{md,json,yml,yaml}'
           actionlint
           gitleaks detect --source . --no-banner --redact
-          python3 scripts/embedded-python-check.py
 
   macos-release-gate:
     runs-on: macos-latest

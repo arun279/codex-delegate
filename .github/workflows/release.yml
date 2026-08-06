@@ -43,13 +43,13 @@ jobs:
         run: |
           grep -q "Apache License" LICENSE
           grep -q "Version 2.0" LICENSE
-          python3 scripts/embedded-python-check.py manifests
+          python3 scripts/release-invariants.py manifests
 
       - name: Version and tag agreement
         id: version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: python3 scripts/embedded-python-check.py release-versions
+        run: python3 scripts/release-invariants.py release-versions
 
       - name: Shell syntax
         run: |
@@ -58,14 +58,12 @@ jobs:
           done
 
       - name: Python syntax
-        run: python3 -m py_compile hooks/*.py scripts/*.py
+        run: python3 -m py_compile bin/codex-delegate hooks/*.py scripts/*.py
         env:
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/codex-delegate-pycache
 
       - name: Shellcheck
-        run: |
-          shellcheck --shell=sh --severity=warning hooks/preflight.sh
-          shellcheck --severity=error bin/codex-delegate
+        run: shellcheck --shell=sh --severity=warning hooks/preflight.sh
 
       - name: Frontmatter
         run: python3 scripts/lint-frontmatter.py
