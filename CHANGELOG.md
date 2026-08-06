@@ -1,8 +1,29 @@
 # Changelog
 
+<!-- markdownlint-disable MD024 -->
+
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `.claude-plugin/plugin.json` is authoritative.
 
 ## [Unreleased]
+
+### Added
+
+- Pinned both strict Claude manifest validations in the release gate and CI with a contract assertion.
+- Pinned the launcher's isolated-startup preflight probe with a contract assertion.
+
+### Changed
+
+- Clarified the shared npm and plugin description with the exact launcher requirements, the plugin's broad hooks, and the npm tarball's launcher-only scope.
+- Removed Lefthook pre-commit glob filters, since every command names its own repository inputs and the filters depended on an uninstalled matcher's semantics.
+
+### Fixed
+
+- Generated runner IDs in the launch shell and stripped their handoff header by content, so models cannot invent colliding IDs and header changes cannot leak into job output.
+- Probed the launcher's exact `/usr/bin/env -S python3 -I -S` startup path during preflight, so unsupported environments report the failure before dispatch.
+
+### Security
+
+- Extended the dynamic-evaluation tripwire to cover dotted evaluation calls and `os` execution, shell, and process-spawn functions without flagging regular-expression compilation.
 
 ## [0.1.2] - 2026-08-05
 
