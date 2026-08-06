@@ -1,9 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env -S python3 -I -S
 # codex-delegate: one foreground Codex turn with bounded process-group cleanup.
-set -uo pipefail
 
-# Preserve the caller's stdin on fd 3. Python source occupies stdin itself.
-exec python3 - "$@" 3<&0 <<'PY'
+from __future__ import annotations
+
+import sys
+
+if not sys.flags.isolated or not sys.flags.no_site:
+    print("codex-delegate: the launcher must run under python3 -I -S", file=sys.stderr)
+    raise SystemExit(2)
+
+# Startup isolation is verified before importing modules that can be shadowed.
 import argparse
 import json
 import os
@@ -14,9 +20,10 @@ import selectors
 import shutil
 import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
+from types import FrameType
+from typing import BinaryIO, TypedDict, cast
 
 PROGRAM = "codex-delegate"
 DEFAULT_DEADLINE = 7200
@@ -37,10 +44,69 @@ EXIT = {
 }
 
 
-class UserError(Exception): pass
+class Arguments(argparse.Namespace):
+    command: str
+    prompt_stdin: bool
+    prompt_file: str | None
+    sandbox: str
+    network: bool
+    cwd: str
+    add_dir: list[str]
+    schema: str | None
+    model: str | None
+    effort: str | None
+    deadline: int
+    runid: str | None
 
 
-def positive_deadline(raw):
+class Model(TypedDict):
+    slug: str
+    efforts: list[str]
+    default: str
+    priority: int
+    visible: bool
+
+
+class RunContext(TypedDict):
+    runid: str
+    model: str
+    effort: str
+    sandbox: str
+    deadline: int
+    final_path: str
+    events_path: str
+    stderr_path: str
+
+
+class Status(TypedDict):
+    schema_version: int
+    runid: str
+    verdict: str
+    exit_code: int
+    diagnostic: str | None
+    signal: str | None
+    model: str
+    effort: str
+    sandbox: str
+    deadline_s: int
+    duration_s: float
+    process_exit_code: int | None
+    terminal_event: str | None
+    final_message_path: str | None
+    events_path: str
+    stderr_path: str
+
+
+class SignalNotice(TypedDict):
+    number: int | None
+    at: float | None
+
+
+class UserError(Exception):
+    pass
+
+
+def positive_deadline(raw: str) -> int:
     try:
         value = int(raw)
     except ValueError as error:
@@ -50,7 +116,7 @@ def positive_deadline(raw):
     return value
 
 
-def parser():
+def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog=PROGRAM,
         description="Run one Codex exec turn and return its final message and status.",
@@ -66,8 +132,9 @@ def parser():
     prompts = run.add_mutually_exclusive_group(required=True)
     prompts.add_argument("--prompt-stdin", action="store_true")
     prompts.add_argument("--prompt-file")
-    run.add_argument("--sandbox", required=True,
-                     choices=("read-only", "workspace-write", "danger-full-access"))
+    run.add_argument(
+        "--sandbox", required=True, choices=("read-only", "workspace-write", "danger-full-access")
+    )
     run.add_argument("--network", action="store_true")
     run.add_argument("--cwd", default=os.getcwd())
     run.add_argument("--add-dir", action="append", default=[])
@@ -80,26 +147,26 @@ def parser():
     return result
 
 
-def fail(message):
+def fail(message: str) -> int:
     print(f"{PROGRAM}: {message}", file=sys.stderr)
     return 2
 
 
-def canonical_dir(raw, label):
+def canonical_dir(raw: str, label: str) -> str:
     path = os.path.realpath(os.path.abspath(raw))
     if not os.path.isdir(path):
         raise UserError(f"{label} is not a directory: {raw}")
     return path
 
 
-def readable_file(raw, label):
+def readable_file(raw: str, label: str) -> str:
     path = os.path.realpath(os.path.abspath(raw))
     if not os.path.isfile(path) or not os.access(path, os.R_OK):
         raise UserError(f"cannot read {label}: {raw}")
     return path
 
 
-def paths_overlap(first, second):
+def paths_overlap(first: str, second: str) -> bool:
     try:
         common = os.path.commonpath((first, second))
     except ValueError:
@@ -107,7 +174,7 @@ def paths_overlap(first, second):
     return common in (first, second)
 
 
-def secure_run_root():
+def secure_run_root() -> str:
     raw = os.environ.get("CODEX_DELEGATE_HOME", str(Path.home() / ".codex-delegate"))
     absolute = os.path.abspath(raw.rstrip(os.sep) or os.sep)
     if absolute == os.sep:
@@ -138,10 +205,16 @@ def secure_run_root():
     return physical
 
 
-def catalog(codex):
+def catalog(codex: str) -> list[Model]:
     try:
-        completed = subprocess.run((codex, "debug", "models"), stdin=subprocess.DEVNULL,
-                                   capture_output=True, text=True, timeout=15, check=False)
+        completed = subprocess.run(  # noqa: S603 -- Run the PATH-resolved Codex binary.
+            (codex, "debug", "models"),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise UserError(f"cannot read the live Codex model catalog: {error}") from error
     if completed.returncode != 0:
@@ -157,8 +230,8 @@ def catalog(codex):
         raise UserError("the live Codex model catalog is invalid") from error
     if not isinstance(entries, list) or not entries:
         raise UserError("the live Codex model catalog has no models")
-    models = []
-    seen = set()
+    models: list[Model] = []
+    seen: set[str] = set()
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise UserError(f"the live Codex model catalog has an invalid entry at index {index}")
@@ -168,7 +241,7 @@ def catalog(codex):
             raise UserError(f"the live Codex model catalog has an invalid slug at index {index}")
         if not isinstance(advertised, list) or not advertised:
             raise UserError(f"the live Codex model catalog has no efforts for {slug}")
-        efforts = []
+        efforts: list[str] = []
         for raw_effort in advertised:
             effort = raw_effort.get("effort") if isinstance(raw_effort, dict) else None
             if not isinstance(effort, str) or not TOKEN.fullmatch(effort) or effort in efforts:
@@ -177,19 +250,32 @@ def catalog(codex):
         default = entry.get("default_reasoning_level")
         if default not in efforts:
             default = next(
-                (item for item in ("medium", "low", "high", "xhigh", "max", "ultra") if item in efforts),
+                (
+                    item
+                    for item in ("medium", "low", "high", "xhigh", "max", "ultra")
+                    if item in efforts
+                ),
                 efforts[0],
             )
         priority = entry.get("priority")
         if isinstance(priority, bool) or not isinstance(priority, int):
             priority = 1_000_000 + index
-        models.append({"slug": slug, "efforts": efforts, "default": default,
-                       "priority": priority, "visible": entry.get("visibility") != "hide"})
+        models.append(
+            {
+                "slug": slug,
+                "efforts": efforts,
+                "default": default,
+                "priority": priority,
+                "visible": entry.get("visibility") != "hide",
+            }
+        )
         seen.add(slug)
     return models
 
 
-def resolve_pair(models, requested_model, requested_effort):
+def resolve_pair(
+    models: list[Model], requested_model: str | None, requested_effort: str | None
+) -> tuple[str, str]:
     if requested_model is not None and not TOKEN.fullmatch(requested_model):
         raise UserError("--model must contain only letters, digits, '.', '_', and '-'")
     if requested_effort is not None and not TOKEN.fullmatch(requested_effort):
@@ -200,10 +286,11 @@ def resolve_pair(models, requested_model, requested_effort):
             raise UserError("the live Codex model catalog has no visible default")
         selected = min(visible, key=lambda item: (item["priority"], item["slug"]))
     else:
-        selected = next((item for item in models if item["slug"] == requested_model), None)
-        if selected is None:
+        matched = next((item for item in models if item["slug"] == requested_model), None)
+        if matched is None:
             available = ", ".join(item["slug"] for item in models)
             raise UserError(f"--model {requested_model} is not in the live catalog ({available})")
+        selected = matched
     effort = requested_effort or selected["default"]
     if effort not in selected["efforts"]:
         supported = ", ".join(selected["efforts"])
@@ -211,7 +298,7 @@ def resolve_pair(models, requested_model, requested_effort):
     return selected["slug"], effort
 
 
-def allocate_run(root, requested):
+def allocate_run(root: str, requested: str | None) -> tuple[str, str]:
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
     runid = requested or f"{stamp}-{os.getpid()}-{secrets.token_hex(3)}"
     if runid in (".", "..") or not TOKEN.fullmatch(runid):
@@ -224,20 +311,26 @@ def allocate_run(root, requested):
     return runid, run_dir
 
 
-def record_pid(path):
+def record_pid(path: str) -> None:
     with open(path, "x", encoding="utf-8") as output:
         output.write(f"{os.getpid()}\n")
         output.flush()
         os.fsync(output.fileno())
 
 
-def store_prompt(args, path):
+def store_prompt(args: Arguments, path: str) -> None:
     with open(path, "xb") as output:
         if args.prompt_stdin:
-            with os.fdopen(3, "rb", closefd=False) as source:
-                shutil.copyfileobj(source, output)
+            if sys.stdin is None:
+                raise UserError("cannot read prompt from stdin: standard input is closed")
+            try:
+                shutil.copyfileobj(sys.stdin.buffer, output)
+            except (OSError, ValueError) as error:
+                raise UserError(
+                    f"cannot read prompt from stdin: reading standard input failed: {error}"
+                ) from error
         else:
-            source_path = readable_file(args.prompt_file, "prompt file")
+            source_path = readable_file(cast(str, args.prompt_file), "prompt file")
             with open(source_path, "rb") as source:
                 shutil.copyfileobj(source, output)
         output.flush()
@@ -246,10 +339,34 @@ def store_prompt(args, path):
         raise UserError("the prompt is empty")
 
 
-def codex_argv(codex, args, model, effort, final_path, cwd, add_dirs, schema):
-    command = [codex, "exec", "--json", "--skip-git-repo-check",
-               "-c", "approval_policy=never", "-c", f"model_reasoning_effort={effort}",
-               "-m", model, "-s", args.sandbox, "-C", cwd, "-o", final_path]
+def codex_argv(
+    codex: str,
+    args: Arguments,
+    model: str,
+    effort: str,
+    final_path: str,
+    cwd: str,
+    add_dirs: list[str],
+    schema: str | None,
+) -> list[str]:
+    command = [
+        codex,
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "-c",
+        "approval_policy=never",
+        "-c",
+        f"model_reasoning_effort={effort}",
+        "-m",
+        model,
+        "-s",
+        args.sandbox,
+        "-C",
+        cwd,
+        "-o",
+        final_path,
+    ]
     for directory in add_dirs:
         command.extend(("--add-dir", directory))
     if schema:
@@ -272,22 +389,22 @@ def codex_argv(codex, args, model, effort, final_path, cwd, add_dirs, schema):
 
 
 class Capture:
-    def __init__(self, output):
+    def __init__(self, output: BinaryIO) -> None:
         self.output = output
         self.bytes_written = 0
         self.buffer = b""
         self.drop_line = False
-        self.error = None
-        self.terminal = None
-        self.terminal_at = None
-        self.failure_message = None
-        self.message = None
+        self.error: str | None = None
+        self.terminal: str | None = None
+        self.terminal_at: float | None = None
+        self.failure_message: str | None = None
+        self.message: str | None = None
 
-    def mark_error(self, kind):
+    def mark_error(self, kind: str) -> None:
         if self.error is None:
             self.error = kind
 
-    def consume_line(self, raw):
+    def consume_line(self, raw: bytes) -> None:
         if not raw:
             self.mark_error("empty_event_record")
             return
@@ -302,9 +419,10 @@ class Capture:
         kind = event["type"]
         if kind == "item.completed":
             item = event.get("item")
-            text = item.get("text") if isinstance(item, dict) else None
-            if isinstance(text, str) and item.get("type") == "agent_message":
-                self.message = text
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and item.get("type") == "agent_message":
+                    self.message = text
             return
         if kind not in ("turn.completed", "turn.failed"):
             return
@@ -318,7 +436,7 @@ class Capture:
             if isinstance(error, dict) and isinstance(error.get("message"), str):
                 self.failure_message = error["message"][:1000]
 
-    def feed(self, chunk):
+    def feed(self, chunk: bytes) -> None:
         remaining = EVENT_LIMIT - self.bytes_written
         if remaining > 0:
             stored = chunk[:remaining]
@@ -342,14 +460,14 @@ class Capture:
             self.buffer = b""
             self.drop_line = True
 
-    def finish(self):
+    def finish(self) -> None:
         if self.buffer or self.drop_line:
             self.mark_error("truncated_event_record")
         self.output.flush()
         os.fsync(self.output.fileno())
 
 
-def group_exists(pgid):
+def group_exists(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
         return True
@@ -359,14 +477,14 @@ def group_exists(pgid):
         return True
 
 
-def signal_group(pgid, number):
+def signal_group(pgid: int, number: int) -> None:
     try:
         os.killpg(pgid, number)
     except ProcessLookupError:
         pass
 
 
-def read_pipe(fd, capture):
+def read_pipe(fd: int, capture: Capture) -> bool:
     eof = False
     while True:
         try:
@@ -380,7 +498,7 @@ def read_pipe(fd, capture):
     return eof
 
 
-def stop_group(process, fd, capture):
+def stop_group(process: subprocess.Popen[bytes], fd: int, capture: Capture) -> bool:
     pgid = process.pid
     for number, grace in ((signal.SIGINT, 0.4), (signal.SIGTERM, 1.0), (signal.SIGKILL, 1.0)):
         if not group_exists(pgid):
@@ -398,7 +516,7 @@ def stop_group(process, fd, capture):
     return not group_exists(pgid)
 
 
-def atomic_status(path, status):
+def atomic_status(path: str, status: Status) -> None:
     temporary = f"{path}.tmp.{os.getpid()}.{secrets.token_hex(4)}"
     with open(temporary, "x", encoding="utf-8") as output:
         json.dump(status, output, indent=2, sort_keys=True)
@@ -409,37 +527,55 @@ def atomic_status(path, status):
     os.chmod(path, 0o400)
 
 
-def has_final_message(path):
+def has_final_message(path: str) -> bool:
     return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
-def print_result(final_path, status):
-    print(f"\n--- FINAL MESSAGE ({final_path}) ---", flush=True)
-    if status["final_message_path"]:
-        with open(final_path, "rb") as final:
-            final.seek(-1, os.SEEK_END)
-            ends_with_newline = final.read(1) == b"\n"
-            final.seek(0)
-            shutil.copyfileobj(final, sys.stdout.buffer)
-        sys.stdout.buffer.flush()
-        if not ends_with_newline:
-            print()
-    else:
-        print(f"(no final message; run verdict is {status['verdict']})")
-    print("\n--- STATUS ---")
-    print(json.dumps(status, indent=2, sort_keys=True))
+def discard_stdout_error() -> None:
+    try:
+        descriptor = sys.stdout.fileno()
+        sink = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(sink, descriptor)
+        finally:
+            os.close(sink)
+    except (OSError, ValueError):
+        pass
+
+
+def print_result(final_path: str, status: Status) -> None:
+    if sys.stdout is None:
+        return
+    try:
+        print(f"\n--- FINAL MESSAGE ({final_path}) ---", flush=True)
+        if status["final_message_path"]:
+            with open(final_path, "rb") as final:
+                final.seek(-1, os.SEEK_END)
+                ends_with_newline = final.read(1) == b"\n"
+                final.seek(0)
+                shutil.copyfileobj(final, sys.stdout.buffer)
+            sys.stdout.buffer.flush()
+            if not ends_with_newline:
+                print()
+        else:
+            print(f"(no final message; run verdict is {status['verdict']})")
+        print("\n--- STATUS ---")
+        print(json.dumps(status, indent=2, sort_keys=True))
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        discard_stdout_error()
 
 
 def status_for(
-    context,
-    verdict,
-    code,
-    diagnostic,
-    signal_name,
-    duration,
-    process_code,
-    terminal,
-):
+    context: RunContext,
+    verdict: str,
+    code: int,
+    diagnostic: str | None,
+    signal_name: str | None,
+    duration: float,
+    process_code: int | None,
+    terminal: str | None,
+) -> Status:
     final_path = context["final_path"]
     return {
         "schema_version": 1,
@@ -461,7 +597,7 @@ def status_for(
     }
 
 
-def run(args, codex, models):
+def run(args: Arguments, codex: str, models: list[Model]) -> int:
     if args.network and args.sandbox != "workspace-write":
         raise UserError("--network requires --sandbox workspace-write")
     cwd = canonical_dir(args.cwd, "--cwd")
@@ -480,15 +616,22 @@ def run(args, codex, models):
     events_path = os.path.join(run_dir, "events.jsonl")
     stderr_path = os.path.join(run_dir, "stderr.log")
     status_path = os.path.join(run_dir, "status.json")
-    context = {"runid": runid, "model": model, "effort": effort, "sandbox": args.sandbox,
-               "deadline": args.deadline, "final_path": final_path,
-               "events_path": events_path, "stderr_path": stderr_path}
+    context: RunContext = {
+        "runid": runid,
+        "model": model,
+        "effort": effort,
+        "sandbox": args.sandbox,
+        "deadline": args.deadline,
+        "final_path": final_path,
+        "events_path": events_path,
+        "stderr_path": stderr_path,
+    }
     store_prompt(args, prompt_path)
     command = codex_argv(codex, args, model, effort, final_path, cwd, add_dirs, schema)
 
-    notice = {"number": None, "at": None}
+    notice: SignalNotice = {"number": None, "at": None}
 
-    def stopped(number, _frame):
+    def stopped(number: int, _frame: FrameType | None) -> None:
         if notice["number"] is None:
             notice["number"] = number
             notice["at"] = time.monotonic()
@@ -498,13 +641,14 @@ def run(args, codex, models):
 
     started_mono = time.monotonic()
     deadline_at = started_mono + args.deadline
-    process = None
-    with open(prompt_path, "rb") as prompt, open(events_path, "xb") as events, open(
-        stderr_path, "xb"
-    ) as stderr:
+    with (
+        open(prompt_path, "rb") as prompt,
+        open(events_path, "xb") as events,
+        open(stderr_path, "xb") as stderr,
+    ):
         capture = Capture(events)
         try:
-            process = subprocess.Popen(
+            process = subprocess.Popen(  # noqa: S603 -- Run the constructed Codex argv, no shell.
                 command,
                 stdin=prompt,
                 stdout=subprocess.PIPE,
@@ -515,19 +659,27 @@ def run(args, codex, models):
             )
         except OSError as error:
             capture.finish()
-            diagnostic = f"could not launch Codex: {error}"
-            status = status_for(context, "LAUNCH_ERROR", EXIT["LAUNCH_ERROR"], diagnostic, None,
-                                time.monotonic() - started_mono, None, None)
+            launch_diagnostic = f"could not launch Codex: {error}"
+            status = status_for(
+                context,
+                "LAUNCH_ERROR",
+                EXIT["LAUNCH_ERROR"],
+                launch_diagnostic,
+                None,
+                time.monotonic() - started_mono,
+                None,
+                None,
+            )
             atomic_status(status_path, status)
             print_result(final_path, status)
             return EXIT["LAUNCH_ERROR"]
 
-        fd = process.stdout.fileno()
+        fd = cast(BinaryIO, process.stdout).fileno()
         os.set_blocking(fd, False)
         watcher = selectors.DefaultSelector()
         watcher.register(fd, selectors.EVENT_READ)
         eof = False
-        outcome = None
+        outcome: str | None = None
         while outcome is None:
             now = time.monotonic()
             timeout = min(0.1, max(0.0, deadline_at - now))
@@ -535,7 +687,7 @@ def run(args, codex, models):
                 eof = read_pipe(fd, capture) or eof
             process_code = process.poll()
             now = time.monotonic()
-            candidates = []
+            candidates: list[tuple[float, str]] = []
             if capture.terminal_at is not None:
                 candidates.append((capture.terminal_at, "terminal"))
             if notice["at"] is not None:
@@ -566,13 +718,21 @@ def run(args, codex, models):
         with open(final_path, "w", encoding="utf-8") as final:
             final.write(capture.message)
 
-    signal_name = signal.Signals(notice["number"]).name if outcome == "signal" else None
+    signal_number = notice["number"]
+    signal_name = (
+        signal.Signals(signal_number).name
+        if outcome == "signal" and signal_number is not None
+        else None
+    )
+    verdict: str
+    diagnostic: str | None
+    code: int
     if not clean:
         verdict, diagnostic = "CLEANUP_FAILED", "the Codex process group survived SIGKILL"
         code = EXIT[verdict]
     elif outcome == "signal":
         verdict, diagnostic = "STOPPED", f"received {signal_name}"
-        code = 128 + notice["number"]
+        code = 128 + cast(int, signal_number)
     elif outcome == "deadline":
         verdict, diagnostic = "DEADLINE", f"wall-clock deadline of {args.deadline}s expired"
         code = EXIT[verdict]
@@ -590,16 +750,27 @@ def run(args, codex, models):
             verdict, diagnostic = "OUTPUT_MISSING", "Codex completed without emitting a message"
             code = EXIT[verdict]
     else:
-        verdict, diagnostic = "NO_TERMINAL_EVENT", "Codex exited without turn.completed or turn.failed"
+        verdict, diagnostic = (
+            "NO_TERMINAL_EVENT",
+            "Codex exited without turn.completed or turn.failed",
+        )
         code = EXIT[verdict]
-    status = status_for(context, verdict, code, diagnostic, signal_name,
-                        time.monotonic() - started_mono, process_code, capture.terminal)
+    status = status_for(
+        context,
+        verdict,
+        code,
+        diagnostic,
+        signal_name,
+        time.monotonic() - started_mono,
+        process_code,
+        capture.terminal,
+    )
     atomic_status(status_path, status)
     print_result(final_path, status)
     return code
 
 
-def main():
+def main() -> int:
     os.umask(0o077)
     if platform.system() != "Darwin":
         print(
@@ -607,7 +778,7 @@ def main():
             file=sys.stderr,
         )
         return EXIT["PLATFORM_UNSUPPORTED"]
-    args = parser().parse_args()
+    args = cast(Arguments, parser().parse_args())
     codex = shutil.which("codex")
     if codex is None:
         raise UserError("codex is not on PATH")
@@ -624,4 +795,3 @@ try:
     raise SystemExit(main())
 except UserError as error:
     raise SystemExit(fail(str(error)))
-PY

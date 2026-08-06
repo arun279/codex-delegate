@@ -90,6 +90,21 @@ missing_tool() {
   return 127
 }
 
+release_version_invariants() {
+  local release_version rc
+  env RELEASE_TAG=definitely-not-a-release-tag \
+    "GITHUB_OUTPUT=$TMPDIR/release-version-wrong-output" \
+    python3 scripts/release-invariants.py release-versions
+  rc=$?
+  if [ "$rc" -ne 1 ]; then
+    echo "release gate: a deliberately wrong release tag exited $rc instead of 1" >&2
+    return 1
+  fi
+  release_version=$(python3 -c 'import json; print(json.load(open(".claude-plugin/plugin.json", encoding="utf-8"))["version"])') || return
+  env "RELEASE_TAG=v$release_version" "GITHUB_OUTPUT=$TMPDIR/release-version-output" \
+    python3 scripts/release-invariants.py release-versions
+}
+
 if [ "${1:-}" = --timeout-self-test ]; then
   GATE_STEP_TIMEOUT_S=1
   GATE_SIGNAL_GRACE_S=0.1
@@ -114,21 +129,25 @@ else
     record "Claude plugin validation" SKIP "SKIP (claude missing)"
   fi
 
-  run_step "ruff check" run_tool ruff check .
-  run_step "ruff format" run_tool ruff format --check .
-  run_step "ruff security" run_tool ruff check --select S .
-  run_step "mypy strict" run_tool mypy --strict hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
-  run_step "Python dead code" run_tool vulture hooks scripts tests --min-confidence 80
+  run_step "ruff check" run_tool ruff check . bin/codex-delegate
+  run_step "ruff format" run_tool ruff format --check . bin/codex-delegate
+  run_step "ruff security" run_tool ruff check --select S . bin/codex-delegate
+  run_step "mypy strict" run_tool mypy --strict bin/codex-delegate hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
+  run_step "Python dead code" run_tool vulture bin/codex-delegate hooks scripts tests --min-confidence 80
   run_step "POSIX preflight shellcheck" run_tool shellcheck --shell=sh --severity=warning hooks/preflight.sh
-  run_step "Bash shellcheck" run_tool shellcheck --severity=error bin/codex-delegate scripts/*.sh tests/*.sh
-  run_step "shell format" run_tool shfmt -d -i 2 -ci bin/codex-delegate hooks/preflight.sh scripts tests
-  run_step "shell syntax" bash -n hooks/preflight.sh bin/codex-delegate scripts/*.sh tests/*.sh
+  run_step "Bash shellcheck" run_tool shellcheck --severity=error scripts/*.sh tests/*.sh
+  run_step "shell format" run_tool shfmt -d -i 2 -ci hooks/preflight.sh scripts tests
+  run_step "shell syntax" bash -n hooks/preflight.sh scripts/*.sh tests/*.sh
   run_step "Markdown lint" run_tool markdownlint '**/*.md'
   run_step "document format" run_tool prettier --check '**/*.{md,json,yml,yaml}'
   run_step "GitHub workflow lint" run_tool actionlint
   run_step "secret scan" run_tool gitleaks detect --source . --no-banner --redact
   run_step "privacy scan" python3 scripts/privacy-scan.py
-  run_step "embedded Python" python3 scripts/embedded-python-check.py
+  run_step "manifest invariants" python3 scripts/release-invariants.py manifests
+  run_step "version invariants" python3 scripts/release-invariants.py versions
+  export -f release_version_invariants
+  run_step "release version invariants" bash -c release_version_invariants
+  export -n -f release_version_invariants
   run_step "frontmatter lint" python3 scripts/lint-frontmatter.py
   run_step "documentation claim check" python3 scripts/claim-check.py
   run_step "runner protocol" python3 scripts/runner-protocol-check.py
