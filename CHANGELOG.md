@@ -4,10 +4,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The ver
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-05
+
 ### Added
 
 - Recorded the launcher pid in the run directory, so a caller can wait on the process instead of a clock.
 - Added `scripts/runner-protocol-check.py` to the release gate. It executes the Bash `agents/runner.md` prescribes: three earlier wait prescriptions shipped without ever being run.
+
+### Security
+
+- Replaced the shell launcher with a direct Python entry point that starts under `python3 -I -S`, so a module in the caller's working directory or on `PYTHONPATH` can no longer shadow a standard-library import the launcher makes. It now requires `/usr/bin/env` with `-S` support and a `python3` that honors `-I -S`; if those isolation flags are not active, the launcher prints a diagnostic and exits 2.
 
 ### Fixed
 
@@ -40,5 +46,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The ver
 - `danger-full-access` status is operational output, not same-user tamper attestation.
 - Requested model identity cannot attest which model the service ultimately used.
 
-[Unreleased]: https://github.com/arun279/codex-delegate/compare/codex-delegate--v0.1.1...HEAD
+[Unreleased]: https://github.com/arun279/codex-delegate/compare/codex-delegate--v0.1.2...HEAD
+[0.1.2]: https://github.com/arun279/codex-delegate/releases/tag/codex-delegate--v0.1.2
 [0.1.1]: https://github.com/arun279/codex-delegate/releases/tag/codex-delegate--v0.1.1
