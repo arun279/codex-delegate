@@ -32,6 +32,8 @@ bad() {
 }
 check() { if eval "$1"; then ok "$2"; else bad "$2 [$1]"; fi; }
 head_() { printf '\n== %s\n' "$*"; }
+DYNAMIC_EVAL_RE='(^|[^[:alnum:]_])(os\.(exec[a-z_]*|system|popen|spawn[a-z_]*|posix_spawn[a-z_]*)|builtins\.compile|([[:alnum:]_]+\.)*(exec|eval|__import__))[[:space:]]*\(|(^|[^[:alnum:]_.])compile[[:space:]]*\(|(^|[^[:alnum:]_])(importlib|runpy)\.'
+has_dynamic_eval_() { grep -Eq "$DYNAMIC_EVAL_RE"; }
 
 permission_request() {
   PERMISSION_OUT=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" |
@@ -54,8 +56,16 @@ CODEX_DELEGATE_HOME=$WORK/runs "$BIN" __supervise "$WORK/forged" \
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "invalid choice" "$WORK/internal.out"' \
   "the deleted supervisor is not executable"
-check '! grep -Eq "(^|[^[:alnum:]_.])(exec|eval|compile|__import__)[[:space:]]*\\(|(^|[^[:alnum:]_])(importlib|runpy)\\." "$BIN"' \
+check '! has_dynamic_eval_ <"$BIN"' \
   "the launcher has no dynamic Python evaluation surface for run-directory code"
+check 'printf "os.execv(\n" | has_dynamic_eval_ &&
+       printf "os.system(\n" | has_dynamic_eval_ &&
+       printf "os.popen(\n" | has_dynamic_eval_ &&
+       printf "os.spawnv(\n" | has_dynamic_eval_ &&
+       printf "os.posix_spawn(\n" | has_dynamic_eval_ &&
+       printf "builtins.eval(\n" | has_dynamic_eval_ &&
+       ! printf "re.compile(\n" | has_dynamic_eval_' \
+  "the tripwire catches dotted execution and eval calls while allowing re.compile"
 
 head_ "isolated Python startup"
 mkdir "$WORK/hostile-modules" "$WORK/benign-secrets"
