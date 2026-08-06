@@ -25,12 +25,7 @@
     "darwin"
   ],
   "files": [
-    ".claude-plugin/",
-    "bin/",
-    "agents/",
-    "skills/",
-    "commands/",
-    "hooks/",
+    "bin/codex-delegate",
     "LICENSE",
     "README.md",
     "PRIVACY.md",

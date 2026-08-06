@@ -105,17 +105,20 @@ check 'python3 -c '"'"'import json,sys; json.load(open(sys.argv[1]))'"'"' "$HOOK
 check '! grep -q "command -v perl\|computer-use\|session-end" "$ROOT/hooks/preflight.sh"' \
   "preflight checks only current runtime dependencies"
 check 'grep -q "run_step .*contract suite.*tests/contract.sh" "$GATE" &&
+       grep -q "run_step .*npm pack guard suite.*tests/npm-pack-check.sh" "$GATE" &&
        grep -q "run_step .*security suite.*tests/security.sh" "$GATE" &&
        grep -q "run_step .*run suite.*tests/run.sh" "$GATE" &&
        grep -q "run_step .*lifecycle suite.*tests/lifecycle.sh" "$GATE" &&
-       grep -q "run_step .*corpus replay" "$GATE" && grep -q "run_step .*determinism" "$GATE"' \
+       grep -q "run_step .*corpus replay" "$GATE" && grep -q "run_step .*determinism" "$GATE" &&
+       grep -q "run_step .*npm package contents.*scripts/npm-pack-check.py" "$GATE"' \
   "release gate retains every required suite, corpus, and determinism check"
 check 'grep -q "run: bash scripts/gate.sh" "$LEFTHOOK"' \
   "lefthook reaches the release gate"
 check 'grep -q "runs-on: macos-latest" "$CI" && grep -q "run: bash scripts/gate.sh" "$CI"' \
   "macOS CI reaches the release gate"
 check '[ -f "$ROOT/hooks/guard-bash.py" ] && [ -d "$ROOT/tests/corpus" ] &&
-       [ -f "$ROOT/scripts/privacy-scan.py" ] && [ -f "$ROOT/scripts/gate.sh" ]' \
+       [ -f "$ROOT/scripts/privacy-scan.py" ] && [ -f "$ROOT/scripts/npm-pack-check.py" ] &&
+       [ -f "$ROOT/scripts/gate.sh" ]' \
   "guard, corpus, privacy scanner, and release gate remain present"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

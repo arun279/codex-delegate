@@ -75,8 +75,14 @@ check '[ "$RC" = 0 ] && [ ! -e "$WORK/cwd-json" ] && [ ! -e "$WORK/cwd-secrets" 
   "PYTHONPATH and the caller working directory cannot shadow standard-library imports"
 check 'head -n 1 "$BIN" | grep -Fxq "#!/usr/bin/env -S python3 -I -S"' \
   "the launcher shebang requires isolated startup without site initialization"
-check 'grep -Fq "if not sys.flags.isolated or not sys.flags.no_site:" "$BIN"' \
-  "the launcher retains its runtime isolation guard"
+(cd "$WORK/hostile-modules" && PYTHONPATH=$WORK/hostile-modules \
+  JSON_MARKER=$WORK/guard-json SECRETS_MARKER=$WORK/guard-secrets \
+  python3 "$BIN" --help >"$WORK/non-isolated.out" 2>&1)
+RC=$?
+check '[ "$RC" = 2 ] &&
+       grep -Fxq "codex-delegate: the launcher must run under python3 -I -S" "$WORK/non-isolated.out" &&
+       [ ! -e "$WORK/guard-json" ] && [ ! -e "$WORK/guard-secrets" ]' \
+  "the runtime guard rejects a non-isolated interpreter before hostile PYTHONPATH imports"
 printf '%s\n' 'ordinary = True' >"$WORK/benign-secrets/secrets.py"
 (cd "$WORK/benign-secrets" && CODEX_DELEGATE_HOME=$WORK/runs STUB_MODE=ok \
   "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
