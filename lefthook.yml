@@ -19,49 +19,34 @@ pre-commit:
   parallel: true
   commands:
     ruff-check:
-      glob: "{*.py,bin/codex-delegate}"
       run: ruff check . bin/codex-delegate
     ruff-format:
-      glob: "{*.py,bin/codex-delegate}"
       run: ruff format --check . bin/codex-delegate
     ruff-security:
-      glob: "{*.py,bin/codex-delegate}"
       run: ruff check --select S . bin/codex-delegate
     mypy:
-      glob: "{*.py,bin/codex-delegate}"
       run: mypy --strict bin/codex-delegate hooks/*.py scripts/*.py tests/*.py tests/corpus/*.py
     vulture:
-      glob: "{*.py,bin/codex-delegate}"
       run: vulture bin/codex-delegate hooks scripts tests --min-confidence 80
     shellcheck-posix:
-      glob: "hooks/preflight.sh"
       run: shellcheck --shell=sh --severity=warning hooks/preflight.sh
     shellcheck-bash:
-      glob: "{scripts/*.sh,tests/*.sh}"
       run: shellcheck --severity=error scripts/*.sh tests/*.sh
     shfmt:
-      glob: "{hooks/*.sh,scripts/*.sh,tests/*.sh}"
       run: shfmt -d -i 2 -ci hooks/preflight.sh scripts tests
     bash-syntax:
-      glob: "{hooks/*.sh,scripts/*.sh,tests/*.sh}"
       run: bash -n hooks/preflight.sh scripts/*.sh tests/*.sh
     prettier:
-      glob: "*.{json,yml,yaml,md}"
       run: prettier --check '**/*.{md,json,yml,yaml}'
     markdownlint:
-      glob: "*.md"
       run: markdownlint '**/*.md'
     actionlint:
-      glob: ".github/workflows/*.{yml,yaml}"
       run: actionlint
     gitleaks:
-      glob: "*"
       run: gitleaks detect --source . --no-banner --redact
     frontmatter:
-      glob: "{agents,commands,skills}/**/*.md"
       run: python3 scripts/lint-frontmatter.py
     claim-check:
-      glob: "{README.md,bin/codex-delegate,scripts/claim-check.py}"
       run: python3 scripts/claim-check.py
 
 pre-push:

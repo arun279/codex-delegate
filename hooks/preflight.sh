@@ -45,6 +45,8 @@ if ! command -v python3 >/dev/null 2>&1; then
   add "python3 is not on PATH. The launcher, Bash guard, and Workflow guard all require it, so delegated runs cannot start safely."
 elif ! python3 -c '' >/dev/null 2>&1; then
   add "python3 is at $(esc "$(command -v python3)") but will not run: python3 -c '' failed. On macOS /usr/bin/python3 can dispatch through xcode-select. Check that xcode-select -p names an installed toolchain, or run xcode-select --install. Until then the launcher and both guards are unavailable."
+elif ! /usr/bin/env -S python3 -I -S -c 'import sys; raise SystemExit(not (sys.flags.isolated and sys.flags.no_site))' >/dev/null 2>&1; then
+  add "The launcher cannot start through /usr/bin/env -S python3 -I -S. It requires /usr/bin/env with -S support and a python3 on PATH that honors both isolation flags."
 fi
 
 shipped=$CLAUDE_PLUGIN_ROOT/bin/codex-delegate
