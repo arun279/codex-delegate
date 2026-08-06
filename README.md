@@ -4,7 +4,7 @@ Hand one coding task from Claude Code to the OpenAI Codex CLI and get the result
 
 The launcher starts `codex exec` in a private process group, reads its JSON event stream, enforces a wall-clock deadline, returns the final message, tears that group down, and publishes one status record that says whether the group went away. `INT`, `TERM`, and `HUP` stop that same run and take the group with it. It records its own pid so a waiting caller can watch the process rather than a clock. There is no detached mode, no job registry, and no recovery command: a run ends when the launcher ends, and a launcher killed outright leaves Codex running in its own session with nothing to reap it.
 
-**Requires macOS**, Python 3, and the Codex CLI already installed and signed in.
+**Requires macOS**, `/usr/bin/env` with `-S` support, a `python3` on `PATH` that starts with `-I -S`, and the Codex CLI already installed and signed in. If those Python isolation flags are not active, the launcher prints a diagnostic and exits 2.
 
 > **Unofficial project.** Not affiliated with, endorsed by, or sponsored by OpenAI or Anthropic. OpenAI and Codex are trademarks of OpenAI, L.L.C. Claude and Claude Code are trademarks of Anthropic PBC. Those names identify interoperating software only. No endorsement is implied.
 
@@ -33,6 +33,10 @@ claude plugin update codex-delegate@arun279-plugins
 ```
 
 Restart Claude Code after updating so its cached skill and agent definitions refresh.
+
+## npm package
+
+The Claude Code plugin is the product. The `codex-delegate` npm package exists so that name resolves to this project rather than to an unrelated publisher. Its tarball contains exactly `package.json`, `bin/codex-delegate`, and the license, README, privacy, security, and changelog documents. The `bin` entry exposes that launcher as the `codex-delegate` executable, so `npx codex-delegate models` and `npx codex-delegate run ...` provide only the standalone terminal CLI documented below. A bare `npx codex-delegate` prints the CLI usage error because a `run` or `models` subcommand is required. The package does not contain or install the Claude Code plugin files.
 
 ## From Claude Code
 
@@ -128,7 +132,7 @@ See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete bou
 
 ## Requirements
 
-The project deliberately supports macOS only. It requires `codex` and a working `python3` on `PATH`. Verify the CLI and sign-in before the first run:
+The project deliberately supports macOS only. It requires `codex` and `python3` on `PATH`, `/usr/bin/env` with `-S` support, and a Python runtime that starts with both `-I` and `-S`. If those isolation flags are not active, the launcher prints a diagnostic and exits 2. Verify the CLI and sign-in before the first run:
 
 ```bash
 codex --version

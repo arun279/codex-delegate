@@ -1,16 +1,23 @@
 name: release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish; must match package.json and plugin.json
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   release:
-    if: github.repository == 'arun279/codex-delegate' && github.event.repository.fork == false && github.event_name == 'push'
+    if: github.repository == 'arun279/codex-delegate' && github.event.repository.fork == false && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -25,6 +32,15 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+
+      - name: npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ] || ! npm whoami >/dev/null 2>&1; then
+            echo "::error::Owner action required: create a granular npm token with read/write access, permission to publish the new codex-delegate package, and bypass 2FA enabled; then save it as the NPM_TOKEN repository secret." >&2
+            exit 1
+          fi
 
       # The hooks target the python3 that ships with macOS, which is 3.9. Compiling them on a
       # newer interpreter would pass syntax this plugin cannot actually run.
@@ -48,8 +64,11 @@ jobs:
       - name: Version and tag agreement
         id: version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: v${{ inputs.version }}
         run: python3 scripts/release-invariants.py release-versions
+
+      - name: npm package contents
+        run: python3 scripts/npm-pack-check.py
 
       - name: Shell syntax
         run: |
@@ -70,18 +89,60 @@ jobs:
 
       # tests/run.sh is deliberately not here. It launches real processes, reads the process table
       # and asserts on teardown, so a shared runner cannot measure its process ownership safely.
+
+      - name: Check npm publication state
+        id: registry
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          error_file="$RUNNER_TEMP/npm-view.err"
+          if published=$(npm view "codex-delegate@${RELEASE_VERSION}" version 2>"$error_file"); then
+            if [ "$published" != "$RELEASE_VERSION" ]; then
+              echo "npm returned unexpected version: $published" >&2
+              exit 1
+            fi
+            echo "exists=true" >>"$GITHUB_OUTPUT"
+            echo "codex-delegate@${RELEASE_VERSION} is already on npm; publication will be skipped."
+          else
+            status=$?
+            if grep -q 'E404' "$error_file"; then
+              echo "exists=false" >>"$GITHUB_OUTPUT"
+              echo "codex-delegate@${RELEASE_VERSION} is not yet on npm."
+            else
+              cat "$error_file" >&2
+              exit "$status"
+            fi
+          fi
+
       - name: Create and push plugin tag
-        run: claude plugin tag --push .
+        env:
+          PLUGIN_TAG: codex-delegate--v${{ steps.version.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${PLUGIN_TAG}" >/dev/null 2>&1; then
+            echo "${PLUGIN_TAG} already exists; tag creation will be skipped."
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then exit "$status"; fi
+            claude plugin tag --push .
+          fi
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           PLUGIN_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "codex-delegate--v${PLUGIN_VERSION}" \
-            --verify-tag \
-            --title "codex-delegate v${PLUGIN_VERSION}" \
-            --generate-notes
+          tag="codex-delegate--v${PLUGIN_VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "GitHub release ${tag} already exists; creation will be skipped."
+          else
+            gh release create "$tag" \
+              --verify-tag \
+              --title "codex-delegate v${PLUGIN_VERSION}" \
+              --generate-notes
+          fi
 
       - name: Publish npm package
-        run: npm publish --access public
+        if: steps.registry.outputs.exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
