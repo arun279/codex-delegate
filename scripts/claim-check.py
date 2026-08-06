@@ -55,13 +55,6 @@ RETIRED_STATUS = {
 }
 
 
-def python_source(shell: str) -> str:
-    marker = "<<'PY'\n"
-    if marker not in shell or not shell.endswith("\nPY\n"):
-        raise ValueError("launcher Python heredoc was not found")
-    return shell.split(marker, 1)[1][:-4]
-
-
 def string_argument(call: ast.Call) -> str | None:
     if not call.args:
         return None
@@ -236,8 +229,7 @@ def inline_tokens(text: str) -> set[str]:
 
 
 def main() -> int:
-    shell = LAUNCHER.read_text(encoding="utf-8")
-    source = python_source(shell)
+    source = LAUNCHER.read_text(encoding="utf-8")
     flags, commands, status_fields, exits = launcher_surface(source)
     documents = {path: path.read_text(encoding="utf-8") for path in DOCS}
     package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))

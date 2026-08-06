@@ -203,6 +203,25 @@ check '[ "$RC" = 2 ] && grep -q "the prompt is empty" "$WORK/stdin-empty.err" &&
        [ ! -e "$WORK/stdin-empty.stdin" ]' \
   "an empty stdin body is stored empty and rejected before Codex starts"
 
+STUB_MODE=ok "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model gpt-5.6-sol --effort medium --runid stdin-closed \
+  0<&- >"$WORK/stdin-closed.out" 2>"$WORK/stdin-closed.err"
+RC=$?
+check '[ "$RC" = 2 ] &&
+       grep -q "cannot read prompt from stdin: standard input is closed" "$WORK/stdin-closed.err" &&
+       ! grep -q "Traceback" "$WORK/stdin-closed.err"' \
+  "a closed stdin is a clean pre-launch validation failure"
+
+STUB_MODE=ok "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model gpt-5.6-sol --effort medium --runid stdin-unreadable \
+  0>/dev/null >"$WORK/stdin-unreadable.out" 2>"$WORK/stdin-unreadable.err"
+RC=$?
+check '[ "$RC" = 2 ] &&
+       grep -q "cannot read prompt from stdin: reading standard input failed" "$WORK/stdin-unreadable.err" &&
+       ! grep -q "standard input is closed" "$WORK/stdin-unreadable.err" &&
+       ! grep -q "Traceback" "$WORK/stdin-unreadable.err"' \
+  "an unreadable stdin reports the failed read instead of a missing stream"
+
 head_ "terminal event and status contract"
 run_case ok completed 0
 RD=$WORK/runs/completed
@@ -217,6 +236,34 @@ check '[ "$(stat -f %Lp "$RD/status.json")" = 400 ]' "status is published read-o
 check '[ "$(json_ "$RD/status.json" terminal_event)" = '"'"'"turn.completed"'"'"' ] &&
        python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["final_message_path"] != sys.argv[2])'"'"' "$RD/status.json" "$RD/final.txt"' \
   "terminal type and final path are actionable"
+
+STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --runid stdout-closed 1>&- 2>"$WORK/stdout-closed.err"
+RC=$?
+check '[ "$RC" = 0 ] &&
+       [ "$(json_ "$WORK/runs/stdout-closed/status.json" verdict)" = '"'"'"COMPLETED"'"'"' ] &&
+       ! grep -q "Traceback" "$WORK/stdout-closed.err"' \
+  "a closed stdout preserves the completed verdict exit without a traceback"
+
+STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --runid stdout-unwritable 1</dev/null 2>"$WORK/stdout-unwritable.err"
+RC=$?
+check '[ "$RC" = 0 ] &&
+       [ "$(json_ "$WORK/runs/stdout-unwritable/status.json" verdict)" = '"'"'"COMPLETED"'"'"' ] &&
+       ! grep -q "Traceback\|Exception ignored" "$WORK/stdout-unwritable.err"' \
+  "an unwritable stdout preserves the completed verdict exit without a traceback"
+
+STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --runid stdout-broken-pipe 2>"$WORK/stdout-broken-pipe.err" | head -n 1 \
+  >"$WORK/stdout-broken-pipe.out"
+RC=${PIPESTATUS[0]}
+check '[ "$RC" = 0 ] &&
+       [ "$(json_ "$WORK/runs/stdout-broken-pipe/status.json" verdict)" = '"'"'"COMPLETED"'"'"' ] &&
+       [ ! -s "$WORK/stdout-broken-pipe.err" ]' \
+  "an early-exiting stdout reader preserves the completed verdict exit without stderr"
 
 run_case fail failed 10
 check '[ "$(json_ "$WORK/runs/failed/status.json" verdict)" = '"'"'"FAILED"'"'"' ] &&

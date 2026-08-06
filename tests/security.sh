@@ -54,8 +54,38 @@ CODEX_DELEGATE_HOME=$WORK/runs "$BIN" __supervise "$WORK/forged" \
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "invalid choice" "$WORK/internal.out"' \
   "the deleted supervisor is not executable"
-check '! grep -Eq "job\.env|control-launcher|source.*run" "$BIN"' \
-  "the launcher never evaluates run-directory code"
+check '! grep -Eq "(^|[^[:alnum:]_.])(exec|eval|compile|__import__)[[:space:]]*\\(|(^|[^[:alnum:]_])(importlib|runpy)\\." "$BIN"' \
+  "the launcher has no dynamic Python evaluation surface for run-directory code"
+
+head_ "isolated Python startup"
+mkdir "$WORK/hostile-modules" "$WORK/benign-secrets"
+printf '%s\n' \
+  'import os' \
+  'open(os.environ["JSON_MARKER"], "w").write("imported")' \
+  >"$WORK/hostile-modules/json.py"
+printf '%s\n' \
+  'import os' \
+  'open(os.environ["SECRETS_MARKER"], "w").write("imported")' \
+  >"$WORK/hostile-modules/secrets.py"
+(cd "$WORK/hostile-modules" && PYTHONPATH=$WORK/hostile-modules \
+  JSON_MARKER=$WORK/cwd-json SECRETS_MARKER=$WORK/cwd-secrets \
+  "$BIN" --help >"$WORK/hostile-help.out" 2>&1)
+RC=$?
+check '[ "$RC" = 0 ] && [ ! -e "$WORK/cwd-json" ] && [ ! -e "$WORK/cwd-secrets" ]' \
+  "PYTHONPATH and the caller working directory cannot shadow standard-library imports"
+check 'head -n 1 "$BIN" | grep -Fxq "#!/usr/bin/env -S python3 -I -S"' \
+  "the launcher shebang requires isolated startup without site initialization"
+check 'grep -Fq "if not sys.flags.isolated or not sys.flags.no_site:" "$BIN"' \
+  "the launcher retains its runtime isolation guard"
+printf '%s\n' 'ordinary = True' >"$WORK/benign-secrets/secrets.py"
+(cd "$WORK/benign-secrets" && CODEX_DELEGATE_HOME=$WORK/runs STUB_MODE=ok \
+  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model gpt-5.6-sol --effort medium --runid benign-import \
+  >"$WORK/benign-import.out" 2>"$WORK/benign-import.err")
+RC=$?
+check '[ "$RC" = 0 ] && [ -f "$WORK/runs/benign-import/status.json" ] &&
+       python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["verdict"] != "COMPLETED")'"'"' "$WORK/runs/benign-import/status.json"' \
+  "a top-level secrets.py cannot destroy a completed run"
 
 head_ "run storage authentication"
 ln -s "$WORK/runs" "$WORK/link-root"

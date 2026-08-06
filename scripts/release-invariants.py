@@ -1,4 +1,4 @@
-"""Reject large embedded Python blocks and run CI manifest invariants."""
+"""Run CI and release invariants."""
 
 import json
 import os
@@ -10,14 +10,6 @@ from pathlib import Path
 from typing import cast
 
 ROOT = Path(__file__).resolve().parent.parent
-MAX_EMBEDDED_LINES = 15
-SKIP_PARTS = {".git", ".mypy_cache", ".ruff_cache", ".venv", "node_modules"}
-HEREDOC = re.compile(
-    r"\bpython(?:3(?:\.\d+)?)?\b[^\n]*?<<-?\s*"
-    r"(?:'(?P<single>[A-Za-z_][A-Za-z0-9_]*)'|"
-    r'"(?P<double>[A-Za-z_][A-Za-z0-9_]*)"|'
-    r"(?P<plain>[A-Za-z_][A-Za-z0-9_]*))"
-)
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 META = set("`$&;|<>(){}[]*?!#~\\\"' \t\r\n")
 RESERVED = {
@@ -38,57 +30,6 @@ RESERVED = {
     "first-party-plugins",
     "healthcare",
 }
-
-
-def embedded_blocks(path: Path) -> Iterator[tuple[int, int]]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    index = 0
-    while index < len(lines):
-        match = HEREDOC.search(lines[index])
-        if match is None:
-            index += 1
-            continue
-        delimiter = next(value for value in match.groupdict().values() if value is not None)
-        end = index + 1
-        while end < len(lines) and lines[end].strip() != delimiter:
-            end += 1
-        if end == len(lines):
-            index += 1
-            continue
-        yield index + 1, end - index - 1
-        index = end + 1
-
-
-def repository_shell_and_yaml() -> Iterator[Path]:
-    for path in ROOT.rglob("*"):
-        if (
-            path.is_file()
-            and path.suffix in {".sh", ".yml"}
-            and not any(part in SKIP_PARTS for part in path.relative_to(ROOT).parts)
-        ):
-            yield path
-
-
-def check_embedded_python() -> int:
-    failures: list[tuple[Path, int, int]] = []
-    blocks = 0
-    for path in sorted(repository_shell_and_yaml()):
-        for line, count in embedded_blocks(path):
-            blocks += 1
-            if count > MAX_EMBEDDED_LINES:
-                failures.append((path, line, count))
-    for path, line, count in failures:
-        relative = path.relative_to(ROOT)
-        print(
-            f"embedded-python: FAIL {relative}:{line}: {count} lines (maximum {MAX_EMBEDDED_LINES})"
-        )
-    if failures:
-        return 1
-    print(
-        f"embedded-python: PASS ({blocks} Python heredocs; maximum allowed "
-        f"{MAX_EMBEDDED_LINES} lines each)"
-    )
-    return 0
 
 
 def load_object(path: Path) -> dict[str, object]:
@@ -241,9 +182,7 @@ def release_version_check() -> int:
 
 
 def main() -> int:
-    command = sys.argv[1:] or ["embedded"]
-    if command == ["embedded"]:
-        return check_embedded_python()
+    command = sys.argv[1:]
     if command == ["manifests"]:
         return manifest_check()
     if command == ["versions"]:
@@ -251,7 +190,7 @@ def main() -> int:
     if command == ["release-versions"]:
         return release_version_check()
     print(
-        f"usage: {Path(sys.argv[0]).name} [embedded|manifests|versions|release-versions]",
+        f"usage: {Path(sys.argv[0]).name} [manifests|versions|release-versions]",
         file=sys.stderr,
     )
     return 2
