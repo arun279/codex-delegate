@@ -111,6 +111,7 @@ if [ "${1:-}" = --timeout-self-test ]; then
   run_step "deliberate hanging step" perl -e 'if ($ENV{GATE_TIMEOUT_PID_FILE}) { open my $f, ">", $ENV{GATE_TIMEOUT_PID_FILE} or exit 125; print $f "$$\n"; close $f } $SIG{INT}=$SIG{TERM}="IGNORE"; sleep 30'
 else
   run_step "contract suite" bash tests/contract.sh
+  run_step "npm pack guard suite" bash tests/npm-pack-check.sh
   run_step "security suite" bash tests/security.sh
   run_step "run suite" bash tests/run.sh
   run_step "lifecycle suite" bash tests/lifecycle.sh
@@ -141,6 +142,7 @@ else
   run_step "Markdown lint" run_tool markdownlint '**/*.md'
   run_step "document format" run_tool prettier --check '**/*.{md,json,yml,yaml}'
   run_step "GitHub workflow lint" run_tool actionlint
+  run_step "npm package contents" python3 scripts/npm-pack-check.py
   run_step "secret scan" run_tool gitleaks detect --source . --no-banner --redact
   run_step "privacy scan" python3 scripts/privacy-scan.py
   run_step "manifest invariants" python3 scripts/release-invariants.py manifests
