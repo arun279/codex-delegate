@@ -37,9 +37,26 @@ AGENT_KEYS = (
     "isolation",
 )
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-# The aliases `claude --model` resolves, plus `inherit`, which only an agent can use. Anything else
-# has to be a full model id, and those start with claude-.
-MODELS = ("sonnet", "sonnet[1m]", "opus", "opusplan", "haiku", "default", "inherit")
+# The aliases documented for Claude Code, plus `inherit`, which only an agent can use. Full model
+# names change independently of this repository, so validate their structure rather than keeping a
+# family allowlist that becomes stale at every model launch. A version component (or the documented
+# preview marker) distinguishes a model name from a value such as `claude-not-real`.
+MODELS = (
+    "best",
+    "default",
+    "fable",
+    "haiku",
+    "inherit",
+    "opus",
+    "opus[1m]",
+    "opusplan",
+    "sonnet",
+    "sonnet[1m]",
+)
+FULL_MODEL = re.compile(
+    r"^claude-(?=[a-z0-9-]*(?:[0-9]|preview(?:-|$)))"
+    r"[a-z0-9]+(?:-[a-z0-9]+)*(?:\[[1-9][0-9]*m\])?(?:@[0-9]+)?$"
+)
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 BLOCK = ("|", "|-", "|+", ">", ">-", ">+")
 FrontmatterValue = Union[str, list[str]]
@@ -127,9 +144,10 @@ def check_agent(data: Frontmatter) -> list[str]:
             f"The keys this repo's agents may set are: {', '.join(AGENT_KEYS)}"
         )
     model = data.get("model")
-    if model and not (isinstance(model, str) and (model in MODELS or model.startswith("claude-"))):
+    if model and not (isinstance(model, str) and (model in MODELS or FULL_MODEL.fullmatch(model))):
         problems.append(
-            f"model {model!r} is neither one of {', '.join(MODELS)} nor a claude-* model id"
+            f"model {model!r} is not a documented model alias or a version-bearing "
+            "claude-* model ID"
         )
     effort = data.get("effort")
     if effort and effort not in EFFORTS:
@@ -153,6 +171,9 @@ def main() -> int:
     # loaded, a skills/deep/nested/SKILL.md is not.
     targets = [(path, "agent") for path in sorted(ROOT.glob("agents/**/*.md"))]
     targets += [(path, "skill") for path in sorted(ROOT.glob("skills/*/SKILL.md"))]
+    if not targets:
+        print("FAIL no agent or skill frontmatter targets found")
+        return 1
 
     failed = 0
     for path, kind in targets:

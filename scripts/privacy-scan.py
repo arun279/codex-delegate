@@ -7,10 +7,13 @@ names. Content scanning includes UTF-8 plus bounded decoding of obvious UTF-16,
 base64, hexadecimal, and zlib representations. It also joins backslash-newline
 continuations and adjacent quoted literals.
 
-Derived decoding is deliberately capped at 64 views, two transformation levels,
-and 1 MiB per view. This does not unpack archives, decrypt content, recognize
-custom encodings, or inspect decoded data beyond those limits. ``--path`` applies
-the same policy to explicit files without placing test content in the repository.
+Derived decoding is deliberately capped at two transformation levels and 1 MiB
+per decoded run. Candidate runs are streamed and duplicate decoded values are
+discarded by digest, so an earlier benign run cannot hide a later one without an
+unbounded aggregate buffer. This does not unpack archives, decrypt content,
+recognize custom encodings, or inspect a single decoded run beyond those limits.
+``--path`` applies the same policy to explicit files without placing test content
+in the repository.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import argparse
 import base64
 import binascii
 import codecs
+import hashlib
 import os
 import re
 import shutil
@@ -26,7 +30,7 @@ import subprocess
 import sys
 import tempfile
 import zlib
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from re import Pattern
@@ -36,10 +40,9 @@ ROOT = Path(__file__).resolve().parent.parent
 RuleMode = Literal["direct", "private_project", "work_product"]
 
 MAX_DECODED_BYTES = 1024 * 1024
-MAX_DERIVED_VIEWS = 64
 MAX_DECODE_DEPTH = 2
-BASE64_RUN = re.compile(rb"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,1398104}={0,2}(?![A-Za-z0-9+/=])")
-HEX_RUN = re.compile(rb"(?<![0-9A-Fa-f])[0-9A-Fa-f]{24,2097152}(?![0-9A-Fa-f])")
+BASE64_RUN = re.compile(rb"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,}={0,2}(?![A-Za-z0-9+/=])")
+HEX_RUN = re.compile(rb"(?<![0-9A-Fa-f])[0-9A-Fa-f]{24,}(?![0-9A-Fa-f])")
 LINE_CONTINUATION = re.compile(r"\\\r?\n")
 ADJACENT_LITERAL_BOUNDARY = re.compile(r"([\"'])[ \t\r\n]*\1")
 
@@ -515,88 +518,76 @@ def bounded_zlib_decode(data: bytes) -> bytes | None:
     return decoded[:MAX_DECODED_BYTES]
 
 
-def encoded_candidates(text: str) -> list[tuple[str, bytes]]:
-    """Decode a bounded number of obvious standalone base64 and hex runs."""
-    candidates: list[tuple[str, bytes]] = []
-    for match in BASE64_RUN.finditer(text.encode("utf-8", errors="surrogatepass")):
-        token = match.group(0)
-        padding = b"=" * (-len(token) % 4)
-        try:
-            decoded = base64.b64decode(token + padding, validate=True)
-        except binascii.Error:
-            continue
+def bounded_base64_decode(token: bytes) -> bytes | None:
+    """Decode no more base64 input than can contribute to a bounded derived view."""
+    encoded_limit = ((MAX_DECODED_BYTES + 2) // 3) * 4
+    bounded = token[:encoded_limit]
+    if len(token) > encoded_limit:
+        bounded = bounded[: len(bounded) - (len(bounded) % 4)]
+    padding = b"=" * (-len(bounded) % 4)
+    try:
+        return base64.b64decode(bounded + padding, validate=True)[:MAX_DECODED_BYTES]
+    except binascii.Error:
+        return None
+
+
+def encoded_candidates(text: str) -> Iterator[tuple[str, bytes]]:
+    """Yield a per-run-bounded value for each obvious standalone encoding."""
+    encoded = text.encode("utf-8", errors="surrogatepass")
+    for match in BASE64_RUN.finditer(encoded):
+        decoded = bounded_base64_decode(match.group(0))
         if decoded:
-            candidates.append(("base64", decoded[:MAX_DECODED_BYTES]))
-        if len(candidates) >= MAX_DERIVED_VIEWS:
-            return candidates
-    for match in HEX_RUN.finditer(text.encode("utf-8", errors="surrogatepass")):
+            yield "base64", decoded
+
+    for match in HEX_RUN.finditer(encoded):
         token = match.group(0)
         if len(token) % 2:
             continue
         try:
-            decoded = bytes.fromhex(token.decode("ascii"))
+            decoded = bytes.fromhex(token[: MAX_DECODED_BYTES * 2].decode("ascii"))
         except ValueError:
             continue
         if decoded:
-            candidates.append(("hex", decoded[:MAX_DECODED_BYTES]))
-        if len(candidates) >= MAX_DERIVED_VIEWS:
-            break
-    return candidates
+            yield "hex", decoded
 
 
-def content_text_views(data: bytes) -> list[TextView]:
-    """Produce bounded decoded and source-normalized views of content."""
-    views: list[TextView] = []
-    queue: list[tuple[bytes, tuple[str, ...], int]] = [(data, (), 0)]
-    seen_data = {data}
-    while queue:
-        current, transformations, depth = queue.pop(0)
+def content_text_views(data: bytes) -> Iterator[TextView]:
+    """Stream bounded decoded and source-normalized views of content."""
+    seen_data = {(len(data), hashlib.sha256(data).digest())}
+
+    def descend(current: bytes, transformations: tuple[str, ...], depth: int) -> Iterator[TextView]:
         for encoding, text in decode_text(current):
-            if len(views) >= MAX_DERIVED_VIEWS:
-                return views
             view_parts = (*transformations, *((encoding,) if encoding else ()))
             suffix = f" [decoded:{'/'.join(view_parts)}]" if view_parts else ""
-            views.append(TextView(suffix, text))
+            yield TextView(suffix, text)
             joined = source_joined(text)
-            if joined != text and len(views) < MAX_DERIVED_VIEWS:
-                views.append(TextView(f"{suffix} [source-joined]", joined))
+            if joined != text:
+                yield TextView(f"{suffix} [source-joined]", joined)
             if depth >= MAX_DECODE_DEPTH:
                 continue
             for transformation, decoded in encoded_candidates(joined):
-                if decoded in seen_data or len(seen_data) >= MAX_DERIVED_VIEWS:
+                fingerprint = (len(decoded), hashlib.sha256(decoded).digest())
+                if fingerprint in seen_data:
                     continue
-                seen_data.add(decoded)
-                queue.append((decoded, (*transformations, transformation), depth + 1))
+                seen_data.add(fingerprint)
+                yield from descend(decoded, (*transformations, transformation), depth + 1)
         if depth < MAX_DECODE_DEPTH:
             inflated = bounded_zlib_decode(current)
-            if inflated and inflated not in seen_data and len(seen_data) < MAX_DERIVED_VIEWS:
-                seen_data.add(inflated)
-                queue.append((inflated, (*transformations, "zlib"), depth + 1))
-    return views
+            if inflated:
+                fingerprint = (len(inflated), hashlib.sha256(inflated).digest())
+                if fingerprint not in seen_data:
+                    seen_data.add(fingerprint)
+                    yield from descend(inflated, (*transformations, "zlib"), depth + 1)
+
+    yield from descend(data, (), 0)
 
 
-def has_private_project(texts: Sequence[str]) -> bool:
-    """Return whether any text places a known project identifier in private context."""
-    return any(
-        pattern.search(text) is not None
-        for rule, pattern in COMPILED_RULES
-        if rule.mode == "private_project"
-        for text in texts
-    )
-
-
-def scan_text(
-    label: str,
-    text: str,
-    project_present: bool,
-) -> list[Violation]:
+def scan_text(label: str, text: str) -> list[Violation]:
     """Find policy matches in one text while retaining exact line numbers."""
     violations: list[Violation] = []
     for rule, pattern in COMPILED_RULES:
-        if rule.mode == "work_product" and not project_present:
-            continue
         for match in pattern.finditer(text):
-            if rule.key == "macos-home-path" and macos_match_is_in_url(text, match.start()):
+            if rule.key == "macos-home-path" and macos_match_is_in_web_url(text, match.start()):
                 continue
             violations.append(
                 Violation(
@@ -610,26 +601,28 @@ def scan_text(
     return violations
 
 
-def macos_match_is_in_url(text: str, match_start: int) -> bool:
-    """Return whether a home-like substring is part of a conventional URL."""
+def macos_match_is_in_web_url(text: str, match_start: int) -> bool:
+    """Return whether a home-like substring is part of an HTTP(S) URL path."""
     line_start = text.rfind("\n", 0, match_start) + 1
     prefix = text[line_start:match_start]
-    url_start = re.search(r"(?i)(?:https?|file)://[^\s<>\"']*$", prefix)
+    url_start = re.search(r"(?i)https?://[^\s<>\"']*$", prefix)
     return url_start is not None
 
 
 def scan_target(target: ScanTarget) -> list[Violation]:
     """Scan a target path and content with shared project-name context."""
-    content_views = content_text_views(target.data)
-    project_present = has_private_project(
-        (target.path_text, *(view.text for view in content_views))
-    )
     violations: list[Violation] = []
     if target.path_text:
-        violations.extend(scan_text(f"{target.label} [path]", target.path_text, project_present))
-    for view in content_views:
-        violations.extend(scan_text(f"{target.label}{view.suffix}", view.text, project_present))
-    return violations
+        violations.extend(scan_text(f"{target.label} [path]", target.path_text))
+    for view in content_text_views(target.data):
+        violations.extend(scan_text(f"{target.label}{view.suffix}", view.text))
+
+    private_project_keys = {rule.key for rule in FORBIDDEN_RULES if rule.mode == "private_project"}
+    project_present = any(violation.rule_key in private_project_keys for violation in violations)
+    if project_present:
+        return violations
+    work_product_keys = {rule.key for rule in FORBIDDEN_RULES if rule.mode == "work_product"}
+    return [violation for violation in violations if violation.rule_key not in work_product_keys]
 
 
 def run_test_git(root: Path, args: Sequence[str]) -> None:
@@ -696,7 +689,7 @@ def run_self_tests(temp_root: Path | None) -> SelfTestResult:
     )
 
     safe_examples = (
-        "https://example.test/docs" + private_home,
+        "https://example.test/?path=" + private_home,
         "/" + "Users/<name>/project",
         "/" + "Users/you/.tool-state/run",
     )
