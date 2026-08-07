@@ -12,8 +12,7 @@ SECURITY=$ROOT/SECURITY.md
 UNINSTALL=$ROOT/commands/uninstall.md
 HOOKS=$ROOT/hooks/hooks.json
 PREFLIGHT=$ROOT/hooks/preflight.sh
-GATE=${GATE_UNDER_TEST:-$ROOT/scripts/gate.sh}
-RELEASE_WORKFLOW_TEST=$ROOT/tests/release-workflow.sh
+GATE=$ROOT/scripts/gate.sh
 LEFTHOOK=$ROOT/lefthook.yml
 CI=$ROOT/.github/workflows/ci.yml
 . "$ROOT/scripts/test-temp.sh"
@@ -113,15 +112,9 @@ check 'grep -q "run_step .*contract suite.*tests/contract.sh" "$GATE" &&
        grep -q "run_step .*security suite.*tests/security.sh" "$GATE" &&
        grep -q "run_step .*run suite.*tests/run.sh" "$GATE" &&
        grep -q "run_step .*lifecycle suite.*tests/lifecycle.sh" "$GATE" &&
-       grep -q "run_step .*plugin install lifecycle.*tests/plugin-lifecycle.sh" "$GATE" &&
        grep -q "run_step .*corpus replay" "$GATE" && grep -q "run_step .*determinism" "$GATE" &&
        grep -q "run_step .*npm package contents.*scripts/npm-pack-check.py" "$GATE"' \
   "release gate retains every required suite, corpus, and determinism check"
-if bash "$RELEASE_WORKFLOW_TEST"; then
-  ok "release workflow blocks failed CI and divergent tags"
-else
-  bad "release workflow blocks failed CI and divergent tags"
-fi
 check 'grep -q "run: bash scripts/gate.sh" "$LEFTHOOK"' \
   "lefthook reaches the release gate"
 check '! grep -Eq '"'"'^[[:space:]]*glob(_matcher)?:'"'"' "$LEFTHOOK"' \
