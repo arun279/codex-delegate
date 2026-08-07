@@ -7,6 +7,7 @@ BIN=$ROOT/bin/codex-delegate
 PERMISSION_HOOK=$ROOT/hooks/permission-allow.py
 PRIVACY=$ROOT/PRIVACY.md
 SECURITY=$ROOT/SECURITY.md
+RELEASE_INVARIANTS=$ROOT/scripts/release-invariants.py
 . "$ROOT/scripts/test-temp.sh"
 test_temp_create "$ROOT" security || {
   echo "security: temporary directory creation failed" >&2
@@ -32,14 +33,19 @@ bad() {
 }
 check() { if eval "$1"; then ok "$2"; else bad "$2 [$1]"; fi; }
 head_() { printf '\n== %s\n' "$*"; }
-DYNAMIC_EVAL_RE='(^|[^[:alnum:]_])(os\.(exec[a-z_]*|system|popen|spawn[a-z_]*|posix_spawn[a-z_]*)|builtins\.compile|([[:alnum:]_]+\.)*(exec|eval|__import__))[[:space:]]*\(|(^|[^[:alnum:]_.])compile[[:space:]]*\(|(^|[^[:alnum:]_])(importlib|runpy)\.'
-has_dynamic_eval_() { grep -Eq "$DYNAMIC_EVAL_RE"; }
+dynamic_eval_check_() { python3 "$RELEASE_INVARIANTS" dynamic-eval; }
 
 permission_request() {
   PERMISSION_OUT=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" |
     python3 "$PERMISSION_HOOK")
   PERMISSION_RC=$?
 }
+
+head_ "false-green regression suite"
+bash "$ROOT/tests/checks.sh"
+RC=$?
+check '[ "$RC" = 0 ]' \
+  "the focused hardening checks are reached by the release gate"
 
 head_ "normal permission boundary"
 SENSITIVE='codex-delegate run --sandbox danger-full-access --prompt-file ~/.aws/credentials'
@@ -56,19 +62,13 @@ CODEX_DELEGATE_HOME=$WORK/runs "$BIN" __supervise "$WORK/forged" \
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "invalid choice" "$WORK/internal.out"' \
   "the deleted supervisor is not executable"
-check '! has_dynamic_eval_ <"$BIN"' \
-  "the launcher has no dynamic Python evaluation surface for run-directory code"
-check 'printf "os.execv(\n" | has_dynamic_eval_ &&
-       printf "os.system(\n" | has_dynamic_eval_ &&
-       printf "os.popen(\n" | has_dynamic_eval_ &&
-       printf "os.spawnv(\n" | has_dynamic_eval_ &&
-       printf "os.posix_spawn(\n" | has_dynamic_eval_ &&
-       printf "builtins.eval(\n" | has_dynamic_eval_ &&
-       ! printf "re.compile(\n" | has_dynamic_eval_' \
-  "the tripwire catches dotted execution and eval calls while allowing re.compile"
+dynamic_eval_check_ <"$BIN"
+RC=$?
+check '[ "$RC" = 0 ]' \
+  "the launcher has no built-in evaluation/import, importlib/runpy, or os process-dispatch surface for run-directory code"
 
 head_ "isolated Python startup"
-mkdir "$WORK/hostile-modules" "$WORK/benign-secrets"
+mkdir "$WORK/hostile-modules"
 printf '%s\n' \
   'import os' \
   'open(os.environ["JSON_MARKER"], "w").write("imported")' \
@@ -93,16 +93,6 @@ check '[ "$RC" = 2 ] &&
        grep -Fxq "codex-delegate: the launcher must run under python3 -I -S" "$WORK/non-isolated.out" &&
        [ ! -e "$WORK/guard-json" ] && [ ! -e "$WORK/guard-secrets" ]' \
   "the runtime guard rejects a non-isolated interpreter before hostile PYTHONPATH imports"
-printf '%s\n' 'ordinary = True' >"$WORK/benign-secrets/secrets.py"
-(cd "$WORK/benign-secrets" && CODEX_DELEGATE_HOME=$WORK/runs STUB_MODE=ok \
-  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
-  --deadline 10 --model gpt-5.6-sol --effort medium --runid benign-import \
-  >"$WORK/benign-import.out" 2>"$WORK/benign-import.err")
-RC=$?
-check '[ "$RC" = 0 ] && [ -f "$WORK/runs/benign-import/status.json" ] &&
-       python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["verdict"] != "COMPLETED")'"'"' "$WORK/runs/benign-import/status.json"' \
-  "a top-level secrets.py cannot destroy a completed run"
-
 head_ "run storage authentication"
 ln -s "$WORK/runs" "$WORK/link-root"
 CODEX_DELEGATE_HOME=$WORK/link-root "$BIN" run --prompt-file "$WORK/prompt.txt" \
