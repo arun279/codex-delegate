@@ -20,12 +20,31 @@ jobs:
     if: github.repository == 'arun279/codex-delegate' && github.event.repository.fork == false && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Require successful CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ci_state=$(gh run list \
+            --workflow ci.yml \
+            --commit "$GITHUB_SHA" \
+            --event push \
+            --limit 1 \
+            --json headSha,status,conclusion \
+            --jq '.[0] | [.headSha, .status, .conclusion] | @tsv')
+          expected_state=$(printf '%s\tcompleted\tsuccess' "$GITHUB_SHA")
+          if [ "$ci_state" != "$expected_state" ]; then
+            echo "::error::Release requires completed, successful push CI for ${GITHUB_SHA}; observed ${ci_state:-no matching run}." >&2
+            exit 1
+          fi
+          echo "Push CI for ${GITHUB_SHA} completed successfully."
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -118,12 +137,43 @@ jobs:
         env:
           PLUGIN_TAG: codex-delegate--v${{ steps.version.outputs.version }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/${PLUGIN_TAG}" >/dev/null 2>&1; then
-            echo "${PLUGIN_TAG} already exists; tag creation will be skipped."
+          remote_tag_target() {
+            tag_ref="refs/tags/${PLUGIN_TAG}"
+            tag_refs=$(git ls-remote --exit-code --tags origin "$tag_ref" "${tag_ref}^{}") || {
+              status=$?
+              return "$status"
+            }
+            printf '%s\n' "$tag_refs" | awk -v direct="$tag_ref" -v peeled="${tag_ref}^{}" '
+              $2 == direct { direct_sha=$1 }
+              $2 == peeled { peeled_sha=$1 }
+              END {
+                if (peeled_sha != "") print peeled_sha
+                else if (direct_sha != "") print direct_sha
+                else exit 1
+              }
+            '
+          }
+
+          if tag_target=$(remote_tag_target); then
+            if [ "$tag_target" != "$GITHUB_SHA" ]; then
+              echo "::error::${PLUGIN_TAG} resolves to ${tag_target}, not release commit ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+            echo "${PLUGIN_TAG} already exists at release commit ${GITHUB_SHA}; tag creation will be skipped."
           else
             status=$?
             if [ "$status" -ne 2 ]; then exit "$status"; fi
             claude plugin tag --push .
+            tag_target=$(remote_tag_target) || {
+              status=$?
+              echo "::error::Could not verify ${PLUGIN_TAG} after creation (git exit ${status})." >&2
+              exit "$status"
+            }
+            if [ "$tag_target" != "$GITHUB_SHA" ]; then
+              echo "::error::Created ${PLUGIN_TAG} resolves to ${tag_target}, not release commit ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+            echo "Created ${PLUGIN_TAG} at release commit ${GITHUB_SHA}."
           fi
 
       - name: Create GitHub release
