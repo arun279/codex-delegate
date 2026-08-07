@@ -419,7 +419,7 @@ registry.modules["os"].system("id")'
 expect_silent_exit 1 \
   "the AST tripwire resolves an imported builtins alias" \
   tripwire 'import builtins as runtime
-runtime.eval("p")'
+runtime.compile("p", "<s>", "exec")'
 expect_silent_exit 1 \
   "the AST tripwire catches globals dispatch" \
   tripwire 'globals()["eval"]("p")'
