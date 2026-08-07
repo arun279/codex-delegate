@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The ver
 
 ### Added
 
+- Required a completed, successful push CI run for the release commit before any publish-side action.
+- Verified both existing and newly created plugin tags resolve to the release commit before publishing.
+- Added a smart-HTTP plugin lifecycle gate that proves git-source installs exclude untracked files and only receive changed bytes after a version bump.
 - Pinned both strict Claude manifest validations in the release gate and CI with a contract assertion.
 - Pinned the launcher's isolated-startup preflight probe with a contract assertion.
 

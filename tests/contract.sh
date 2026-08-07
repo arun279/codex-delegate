@@ -13,6 +13,7 @@ UNINSTALL=$ROOT/commands/uninstall.md
 HOOKS=$ROOT/hooks/hooks.json
 PREFLIGHT=$ROOT/hooks/preflight.sh
 GATE=$ROOT/scripts/gate.sh
+PLUGIN_LIFECYCLE=$ROOT/tests/plugin-lifecycle.sh
 LEFTHOOK=$ROOT/lefthook.yml
 CI=$ROOT/.github/workflows/ci.yml
 . "$ROOT/scripts/test-temp.sh"
@@ -107,11 +108,20 @@ check '! grep -q "command -v perl\|computer-use\|session-end" "$PREFLIGHT"' \
 check 'grep -Fq "/usr/bin/env -S python3 -I -S -c" "$PREFLIGHT" &&
        grep -Fq "sys.flags.isolated and sys.flags.no_site" "$PREFLIGHT"' \
   "preflight retains the launcher exact isolated-startup probe"
+check 'grep -Fq '"'"'CLAUDE_CONFIG_DIR=$WORK/home/.claude'"'"' "$PLUGIN_LIFECYCLE" &&
+       grep -Fq '"'"'find "$CLAUDE_CONFIG_DIR/plugins/cache"'"'"' "$PLUGIN_LIFECYCLE" &&
+       grep -Fq '"'"'MARKET_CLONE=$CLAUDE_CONFIG_DIR/plugins/marketplaces/$MARKET'"'"' "$PLUGIN_LIFECYCLE"' \
+  "plugin lifecycle isolates every Claude config and cache path"
+check '! grep -Fq "already at the latest version" "$PLUGIN_LIFECYCLE" &&
+       ! grep -Fq "updated from 1.0.0 to 1.0.1" "$PLUGIN_LIFECYCLE"' \
+  "plugin lifecycle asserts cache state instead of Claude prose"
 check 'grep -q "run_step .*contract suite.*tests/contract.sh" "$GATE" &&
        grep -q "run_step .*npm pack guard suite.*tests/npm-pack-check.sh" "$GATE" &&
        grep -q "run_step .*security suite.*tests/security.sh" "$GATE" &&
        grep -q "run_step .*run suite.*tests/run.sh" "$GATE" &&
        grep -q "run_step .*lifecycle suite.*tests/lifecycle.sh" "$GATE" &&
+       grep -q "run_step .*release workflow suite.*tests/release-workflow.sh" "$GATE" &&
+       grep -q "run_step .*plugin install lifecycle.*tests/plugin-lifecycle.sh" "$GATE" &&
        grep -q "run_step .*corpus replay" "$GATE" && grep -q "run_step .*determinism" "$GATE" &&
        grep -q "run_step .*npm package contents.*scripts/npm-pack-check.py" "$GATE"' \
   "release gate retains every required suite, corpus, and determinism check"
@@ -123,6 +133,7 @@ check 'grep -q "runs-on: macos-latest" "$CI" && grep -q "run: bash scripts/gate.
   "macOS CI reaches the release gate"
 check 'grep -Eq '"'"'^[[:space:]]*run_step "[^"]+" claude plugin validate \. --strict[[:space:]]*$'"'"' "$GATE" &&
        grep -Eq '"'"'^[[:space:]]*run_step "[^"]+" claude plugin validate \./\.claude-plugin/plugin\.json --strict[[:space:]]*$'"'"' "$GATE" &&
+       grep -Fq '"'"'record "plugin install lifecycle" SKIP "SKIP (claude missing)"'"'"' "$GATE" &&
        grep -Eq '"'"'^[[:space:]]*- run: claude plugin validate \. --strict[[:space:]]*$'"'"' "$CI" &&
        grep -Eq '"'"'^[[:space:]]*- run: claude plugin validate \./\.claude-plugin/plugin\.json --strict[[:space:]]*$'"'"' "$CI"' \
   "gate and CI retain marketplace and component strict validation"
