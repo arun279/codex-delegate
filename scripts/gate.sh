@@ -115,17 +115,20 @@ else
   run_step "security suite" bash tests/security.sh
   run_step "run suite" bash tests/run.sh
   run_step "lifecycle suite" bash tests/lifecycle.sh
+  run_step "release workflow suite" bash tests/release-workflow.sh
   run_step "corpus replay" python3 tests/corpus/replay.py
   run_step "determinism" bash tests/determinism.sh
 
   if command -v claude >/dev/null 2>&1; then
+    run_step "plugin install lifecycle" bash tests/plugin-lifecycle.sh
     run_step "Claude marketplace validation" claude plugin validate . --strict
     run_step "Claude plugin validation" claude plugin validate ./.claude-plugin/plugin.json --strict
   else
     printf '\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
-    echo "!! SKIPPED CLAUDE VALIDATION: 'claude' CLI is absent from PATH !!"
-    echo "!! BOTH strict plugin validations were NOT run.                  !!"
+    echo "!! SKIPPED CLAUDE CHECKS: 'claude' CLI is absent from PATH !!"
+    echo "!! Install lifecycle and BOTH validations were NOT run.     !!"
     printf '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
+    record "plugin install lifecycle" SKIP "SKIP (claude missing)"
     record "Claude marketplace validation" SKIP "SKIP (claude missing)"
     record "Claude plugin validation" SKIP "SKIP (claude missing)"
   fi
