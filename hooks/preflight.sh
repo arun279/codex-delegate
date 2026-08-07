@@ -49,12 +49,22 @@ elif ! /usr/bin/env -S python3 -I -S -c 'import sys; raise SystemExit(not (sys.f
   add "The launcher cannot start through /usr/bin/env -S python3 -I -S. It requires /usr/bin/env with -S support and a python3 on PATH that honors both isolation flags."
 fi
 
-shipped=$CLAUDE_PLUGIN_ROOT/bin/codex-delegate
-found=$(command -v codex-delegate 2>/dev/null)
-if [ -z "$found" ]; then
-  add "codex-delegate is not on PATH, so the runner cannot start the launcher. Reinstall or re-enable the plugin, then open a new session."
-elif [ "$(physical "$found")" != "$(physical "$shipped")" ]; then
-  add "Unsafe codex-delegate PATH mismatch. PATH resolves the bare name to $(esc "$found"), but this plugin ships $(esc "$shipped"). The permission hook will not approve or persist a rule for either name. Delete the other copy or invoke the shipped absolute path after checking it."
+plugin_root=${CLAUDE_PLUGIN_ROOT:-}
+if [ -z "$plugin_root" ]; then
+  add "CLAUDE_PLUGIN_ROOT is empty, so the SessionStart hook cannot locate the shipped codex-delegate launcher. Reinstall or re-enable the plugin, then open a new session."
+else
+  shipped=$plugin_root/bin/codex-delegate
+  if [ ! -f "$shipped" ] || [ ! -x "$shipped" ]; then
+    add "The shipped codex-delegate launcher at $(esc "$shipped") is missing or not executable. Reinstall or re-enable the plugin, then open a new session."
+  else
+    # Claude injects plugin bin/ only into Bash-tool PATH, not this SessionStart hook. An absent
+    # bare name is therefore healthy here. A present different name is inherited from the login
+    # environment and would precede the later Bash-tool injection, so delegated runs would use it.
+    found=$(command -v codex-delegate 2>/dev/null)
+    if [ -n "$found" ] && [ "$(physical "$found")" != "$(physical "$shipped")" ]; then
+      add "Unsafe codex-delegate PATH mismatch. PATH resolves the bare name to $(esc "$found"), but this plugin ships $(esc "$shipped"). Delegated runs would invoke the other copy. Remove or rename it, or ensure the shipped plugin bin directory comes first on the Bash tool's PATH."
+    fi
+  fi
 fi
 
 [ -n "$problems" ] || exit 0
