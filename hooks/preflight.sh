@@ -51,7 +51,9 @@ fi
 
 shipped=$CLAUDE_PLUGIN_ROOT/bin/codex-delegate
 found=$(command -v codex-delegate 2>/dev/null)
-if [ -n "$found" ] && [ "$(physical "$found")" != "$(physical "$shipped")" ]; then
+if [ -z "$found" ]; then
+  add "codex-delegate is not on PATH, so the runner cannot start the launcher. Reinstall or re-enable the plugin, then open a new session."
+elif [ "$(physical "$found")" != "$(physical "$shipped")" ]; then
   add "Unsafe codex-delegate PATH mismatch. PATH resolves the bare name to $(esc "$found"), but this plugin ships $(esc "$shipped"). The permission hook will not approve or persist a rule for either name. Delete the other copy or invoke the shipped absolute path after checking it."
 fi
 
