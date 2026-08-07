@@ -78,6 +78,10 @@ invalid_utf8_tripwire() {
     PYTHONIOENCODING=utf-8:strict python3 "$RELEASE_INVARIANTS" dynamic-eval
 }
 
+null_byte_tripwire() {
+  printf 'x = 1\000\n' | python3 "$RELEASE_INVARIANTS" dynamic-eval
+}
+
 decoded_streaming_check() {
   python3 -c 'import base64,importlib.util,sys; spec=importlib.util.spec_from_file_location("privacy_scan",sys.argv[1]); module=importlib.util.module_from_spec(spec); sys.modules[spec.name]=module; spec.loader.exec_module(module); text="\n".join(base64.b64encode(bytes([index])*65536).decode() for index in range(1,21)); values=list(module.encoded_candidates(text)); raise SystemExit(len(values) != 20 or max(len(value) for _,value in values) > module.MAX_DECODED_BYTES)' \
     "$ROOT/scripts/privacy-scan.py"
@@ -129,11 +133,57 @@ isolation_mutation_check() {
     [ "$deisolated_rc" -ne 0 ] && [ -e "$WORK/deisolated-secrets" ]
 }
 
+preflight_does_not_spawn_launcher() {
+  rm -f "$PREFLIGHT_MARKER"
+  env PATH="$PREFLIGHT_PLUGIN_ROOT/bin:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+    PREFLIGHT_MARKER="$PREFLIGHT_MARKER" CLAUDE_PLUGIN_ROOT="$PREFLIGHT_PLUGIN_ROOT" \
+    sh "$ROOT/hooks/preflight.sh" || return
+  [ ! -e "$PREFLIGHT_MARKER" ]
+}
+
 printf '\n== preflight launcher reachability\n'
-expect_diagnostic 0 "codex-delegate is not on PATH" \
-  "a missing launcher and missing plugin root produce a preflight diagnostic" \
+expect_silent_exit 0 \
+  "the shipped launcher passes by absolute path without plugin bin on hook PATH" \
   env PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
-  CLAUDE_PLUGIN_ROOT="$WORK/missing-plugin" sh "$ROOT/hooks/preflight.sh"
+  CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
+
+expect_diagnostic 0 "CLAUDE_PLUGIN_ROOT is empty" \
+  "an empty plugin root produces a preflight diagnostic" \
+  env PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CLAUDE_PLUGIN_ROOT= sh "$ROOT/hooks/preflight.sh"
+
+MISSING_PLUGIN_ROOT=$WORK/missing-plugin
+mkdir -p "$MISSING_PLUGIN_ROOT/bin"
+expect_diagnostic 0 "is missing or not executable" \
+  "a missing shipped launcher produces a preflight diagnostic" \
+  env PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CLAUDE_PLUGIN_ROOT="$MISSING_PLUGIN_ROOT" sh "$ROOT/hooks/preflight.sh"
+
+DIRECTORY_PLUGIN_ROOT=$WORK/directory-plugin
+mkdir -p "$DIRECTORY_PLUGIN_ROOT/bin/codex-delegate"
+expect_diagnostic 0 "is missing or not executable" \
+  "a directory at the shipped launcher path produces a preflight diagnostic" \
+  env PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CLAUDE_PLUGIN_ROOT="$DIRECTORY_PLUGIN_ROOT" sh "$ROOT/hooks/preflight.sh"
+
+BROKEN_PLUGIN_ROOT=$WORK/broken-plugin
+mkdir -p "$BROKEN_PLUGIN_ROOT/bin"
+printf '%s\n' '#!/bin/sh' 'exit 42' >"$BROKEN_PLUGIN_ROOT/bin/codex-delegate"
+chmod 700 "$BROKEN_PLUGIN_ROOT/bin/codex-delegate"
+expect_diagnostic 0 "Unsafe codex-delegate PATH mismatch" \
+  "a different codex-delegate earlier on PATH produces a preflight diagnostic" \
+  env PATH="$BROKEN_PLUGIN_ROOT/bin:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
+
+PREFLIGHT_PLUGIN_ROOT=$WORK/preflight-plugin
+PREFLIGHT_MARKER=$WORK/preflight-launcher-ran
+mkdir -p "$PREFLIGHT_PLUGIN_ROOT/bin"
+printf '%s\n' '#!/bin/sh' ': >"$PREFLIGHT_MARKER"' 'exit 0' \
+  >"$PREFLIGHT_PLUGIN_ROOT/bin/codex-delegate"
+chmod 700 "$PREFLIGHT_PLUGIN_ROOT/bin/codex-delegate"
+expect_silent_exit 0 \
+  "SessionStart inspects but does not spawn the shipped launcher" \
+  preflight_does_not_spawn_launcher
 
 printf '\n== privacy representations\n'
 MAC_USERS_SEGMENT=Users
@@ -248,6 +298,18 @@ expect_diagnostic 1 "is not valid SemVer" \
   env RELEASE_TAG=vnot-semver GITHUB_OUTPUT="$WORK/release-output" \
   python3 "$RELEASE_ROOT/scripts/release-invariants.py" release-versions
 
+mutate_json "$RELEASE_ROOT/package.json" version '"0.2.0-rc.1"'
+mutate_json "$RELEASE_ROOT/.claude-plugin/plugin.json" version '"0.2.0-rc.1"'
+expect_diagnostic 0 "version 0.2.0-rc.1" \
+  "SemVer prerelease identifiers are accepted" \
+  python3 "$RELEASE_ROOT/scripts/release-invariants.py" versions
+
+mutate_json "$RELEASE_ROOT/package.json" version '"0.2.0+build.7"'
+mutate_json "$RELEASE_ROOT/.claude-plugin/plugin.json" version '"0.2.0+build.7"'
+expect_diagnostic 0 "version 0.2.0+build.7" \
+  "SemVer build metadata identifiers are accepted" \
+  python3 "$RELEASE_ROOT/scripts/release-invariants.py" versions
+
 cp "$RELEASE_ROOT/.claude-plugin/marketplace.clean.json" \
   "$RELEASE_ROOT/.claude-plugin/marketplace.json"
 mutate_json "$RELEASE_ROOT/.claude-plugin/marketplace.json" owner.name '"Owner\u0001"'
@@ -351,6 +413,14 @@ expect_silent_exit 1 \
   tripwire 'import sys
 sys.modules["os"].system("id")'
 expect_silent_exit 1 \
+  "the AST tripwire resolves an imported sys alias" \
+  tripwire 'import sys as registry
+registry.modules["os"].system("id")'
+expect_silent_exit 1 \
+  "the AST tripwire resolves an imported builtins alias" \
+  tripwire 'import builtins as runtime
+runtime.compile("p", "<s>", "exec")'
+expect_silent_exit 1 \
   "the AST tripwire catches globals dispatch" \
   tripwire 'globals()["eval"]("p")'
 expect_silent_exit 1 \
@@ -418,6 +488,9 @@ expect_silent_exit 2 \
   "unparseable Python is not reported as clean" \
   tripwire 'def broken(:
 os.system("id")'
+expect_silent_exit 2 \
+  "a null byte is reported as unparseable rather than dangerous" \
+  null_byte_tripwire
 expect_diagnostic 2 "dynamic-eval check failed:" \
   "non-UTF-8 input is not reported as clean" \
   invalid_utf8_tripwire
