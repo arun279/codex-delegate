@@ -115,6 +115,7 @@ else
   run_step "security suite" bash tests/security.sh
   run_step "run suite" bash tests/run.sh
   run_step "lifecycle suite" bash tests/lifecycle.sh
+  run_step "plugin install lifecycle" bash tests/plugin-lifecycle.sh
   run_step "corpus replay" python3 tests/corpus/replay.py
   run_step "determinism" bash tests/determinism.sh
 
