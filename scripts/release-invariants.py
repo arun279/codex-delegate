@@ -191,9 +191,9 @@ def dynamic_eval_check(source: str) -> int:
     """Return 0 for clean input, 1 for a dangerous surface, and 2 when analysis cannot run."""
     try:
         tree = ast.parse(source)
-        return 1 if DynamicEvalAnalyzer(tree).found() else 0
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return 2
+    return 1 if DynamicEvalAnalyzer(tree).found() else 0
 
 
 def load_object(path: Path) -> dict[str, object]:
