@@ -3,7 +3,7 @@
 set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
-BIN=$ROOT/bin/codex-delegate
+BIN=${CODEX_DELEGATE_TEST_BIN:-$ROOT/bin/codex-delegate}
 . "$ROOT/scripts/test-temp.sh"
 test_temp_create "$ROOT" lifecycle || {
   echo "lifecycle: temporary directory creation failed" >&2
@@ -99,6 +99,15 @@ check 'cmp -s "$WORK/terminal.expected" "$RD/final.txt" &&
        grep -q "TERMINAL BEFORE HANG" "$WORK/terminal.out"' \
   "a streamed final message survives a Codex process killed before it wrote one"
 
+STUB_MODE=terminal_tail "$BIN" run "${run_args[@]}" --deadline 5 \
+  --runid lc-terminal-tail >"$WORK/terminal-tail.out" 2>"$WORK/terminal-tail.err"
+RC=$?
+RD=$WORK/runs/lc-terminal-tail
+check '[ "$RC" = 0 ] && [ "$(text_ "$RD/status.json" verdict)" = COMPLETED ] &&
+       [ "$(wc -c <"$RD/events.jsonl" | tr -d " ")" -gt 4000000 ] &&
+       grep -q "NATIVE TAIL DOCUMENT" "$RD/final.txt"' \
+  "post-terminal settlement keeps draining the same Codex stdout"
+
 head_ "the process handle a waiting caller holds"
 STUB_MODE=hold STUB_PID_CAPTURE=$WORK/handle.pid STUB_DESCENDANT_CAPTURE=$WORK/handle-child.pid \
   "$BIN" run "${run_args[@]}" --deadline 30 --runid lc-handle \
@@ -140,6 +149,71 @@ check 'wait_gone "$CHILD" && wait_gone "$DESCENDANT"' \
 check '[ "$(json_ "$RD/status.json" verdict)" = '"'"'"DEADLINE"'"'"' ] &&
        [ "$(json_ "$RD/status.json" exit_code)" = 11 ]' \
   "deadline status agrees with the command exit"
+
+head_ "productive stdout cannot suspend the deadline"
+SECONDS=0
+STUB_MODE=flood STUB_FLOOD_SECONDS=8 "$BIN" run "${run_args[@]}" \
+  --deadline 1 --runid lc-flood >"$WORK/flood.out" 2>"$WORK/flood.err"
+RC=$?
+ELAPSED=$SECONDS
+RD=$WORK/runs/lc-flood
+DURATION=$(text_ "$RD/status.json" duration_s 2>/dev/null || printf missing)
+printf '  evidence rc=%s elapsed_s=%s duration_s=%s event_bytes=%s\n' "$RC" "$ELAPSED" \
+  "$DURATION" "$(wc -c <"$RD/events.jsonl" 2>/dev/null | tr -d ' ')"
+check '[ "$RC" = 11 ] && [ "$ELAPSED" -lt 5 ] &&
+       python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["duration_s"] >= 5)'"'"' "$RD/status.json"' \
+  "continuous event output cannot postpone the wall-clock deadline"
+
+head_ "event I/O failure after launch"
+(
+  ulimit -f 8
+  trap '' XFSZ
+  exec env STUB_MODE=capture_io_fail STUB_PID_CAPTURE="$WORK/capture-io.pid" \
+    "$BIN" run "${run_args[@]}" --deadline 10 --runid lc-capture-io
+) >"$WORK/capture-io.out" 2>"$WORK/capture-io.err"
+RC=$?
+CHILD=$(cat "$WORK/capture-io.pid")
+PIDS+=("$CHILD")
+RD=$WORK/runs/lc-capture-io
+check '[ "$RC" = 17 ] && [ -s "$RD/status.json" ] &&
+       [ "$(text_ "$RD/status.json" diagnostic)" = event_stream_write_failed ] &&
+       ! grep -q Traceback "$WORK/capture-io.err"' \
+  "capture failure publishes STREAM_ERROR status without a traceback"
+check 'wait_gone "$CHILD"' "capture failure still tears down the Codex process group"
+
+head_ "prompt ingestion shares the deadline"
+mkfifo "$WORK/slow-prompt.fifo"
+(
+  exec 9>"$WORK/slow-prompt.fifo"
+  printf 'partial prompt\n' >&9
+  sleep 3
+) &
+WRITER=$!
+PIDS+=("$WRITER")
+SECONDS=0
+STUB_MODE=ok "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" \
+  --model gpt-5.6-sol --effort medium --deadline 1 --runid lc-slow-prompt \
+  <"$WORK/slow-prompt.fifo" >"$WORK/slow-prompt.out" 2>"$WORK/slow-prompt.err"
+RC=$?
+ELAPSED=$SECONDS
+kill -KILL "$WRITER" 2>/dev/null || true
+wait "$WRITER" 2>/dev/null || true
+RD=$WORK/runs/lc-slow-prompt
+check '[ "$RC" = 11 ] && [ "$ELAPSED" -lt 3 ] && [ -s "$RD/status.json" ] &&
+       python3 -c '"'"'import json,sys; s=json.load(open(sys.argv[1])); raise SystemExit(s["duration_s"] < 1)'"'"' "$RD/status.json"' \
+  "prompt EOF is bounded and duration includes prompt ingestion"
+
+head_ "prompt failure publishes status after allocation"
+: >"$WORK/empty-prompt.txt"
+STUB_MODE=ok "$BIN" run --prompt-file "$WORK/empty-prompt.txt" --sandbox read-only \
+  --cwd "$WORK/job" --model gpt-5.6-sol --effort medium --deadline 10 \
+  --runid lc-empty-prompt >"$WORK/empty-prompt.out" 2>"$WORK/empty-prompt.err"
+RC=$?
+RD=$WORK/runs/lc-empty-prompt
+check '[ "$RC" = 12 ] && [ -s "$RD/pid" ] && [ -s "$RD/status.json" ] &&
+       [ "$(text_ "$RD/status.json" verdict)" = LAUNCH_ERROR ] &&
+       [ "$(text_ "$RD/status.json" diagnostic)" = "the prompt is empty" ]' \
+  "an allocated empty-prompt run has a complete failure record"
 
 head_ "direct stop signals"
 signal_case() {

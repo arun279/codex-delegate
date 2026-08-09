@@ -9,14 +9,14 @@ When you start a run, the plugin invokes the `codex` CLI you installed and signe
 The selected sandbox bounds local access:
 
 - `read-only` cannot write project files;
-- `workspace-write` can write the named cwd and added directories; and
+- `workspace-write` can write the named cwd and added directories, while protecting their nested `.git`, `.agents`, and `.codex` paths by default; an explicitly added Git directory is a separate writable root; and
 - `danger-full-access` has no filesystem sandbox.
 
 ## What stays on your machine
 
 Each run stores owner-only artifacts under `~/.codex-delegate/<runid>/`:
 
-- `pid`, the launcher's own process id, so a waiting caller can watch the process;
+- `pid`, the launcher's process id and advisory-lock wait handle;
 - `prompt.txt`, containing the complete prompt;
 - `events.jsonl`, containing the bounded Codex JSON event stream;
 - `stderr.log`;
@@ -31,7 +31,7 @@ The plugin does not install a persistent Bash allow rule. Older releases could a
 
 ## What the hooks see
 
-The `PreToolUse` hooks inspect Bash, Monitor, and Workflow call text. They keep no state, open no sockets, and send nothing over the network. One catches accidental direct Codex launches; the other checks runner call shape and wrapper overrides. The configured `PermissionRequest` hook is inert.
+The `PreToolUse` hooks inspect Bash, Monitor, and Workflow call text. They keep no state, open no sockets, and send nothing over the network. They deny statically recognizable direct Codex launches, empty runner prompts, and wrapper overrides; they do not validate dynamic envelope semantics. The configured `PermissionRequest` hook is inert.
 
 ## Contact
 
