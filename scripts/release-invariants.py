@@ -6,6 +6,8 @@ import ast
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
@@ -43,6 +45,24 @@ DANGEROUS_BUILTINS = {"__import__", "compile", "eval", "exec"}
 DANGEROUS_DOTTED_CALLS = {"__import__", "eval", "exec"}
 DANGEROUS_MODULE_ROOTS = {"importlib", "runpy"}
 TRACKED_MODULE_ROOTS = {"builtins", "os", "sys"}
+DISCLOSURES = {
+    "PreToolUse hook scope": re.compile(
+        r"PreToolUse hooks.*Bash, Monitor, and Workflow", re.IGNORECASE
+    ),
+    "PermissionRequest behavior": re.compile(r"PermissionRequest hook is inert", re.IGNORECASE),
+    "OpenAI data egress": re.compile(r"prompts and files.*sent to OpenAI", re.IGNORECASE),
+    "account-funded usage": re.compile(r"ChatGPT.*API-billed usage", re.IGNORECASE),
+}
+CHANGELOG_ENTRY = re.compile(r"^[-+*] ")
+CHANGELOG_EVIDENCE = re.compile(
+    r"^  <!-- evidence: (?P<path>[A-Za-z0-9_./-]+) :: (?P<needle>.+) -->$"
+)
+CHANGELOG_SECTIONS = {"Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"}
+TYPOGRAPHIC_DASH = re.compile(r"[\u2010-\u2015]")
+PUBLICATION_COPY_EXCLUSIONS = {
+    "scripts/release-invariants.py",  # This rule names the characters it rejects.
+    "tests/run.sh",  # Deliberate UTF-8 stream fixture.
+}
 
 
 def literal_string(node: ast.AST) -> str | None:
@@ -288,6 +308,11 @@ def manifest_check() -> int:
             for text in strings_under(source):
                 if set(text) & META:
                     problems.append(f"{label} source {text!r} holds a shell metacharacter")
+        if label == "codex-delegate" and source != "./":
+            problems.append(
+                "codex-delegate source must remain './' until an installable release asset exists, "
+                f"got {source!r}"
+            )
         raw_description = entry.get("description", "")
         description = raw_description if isinstance(raw_description, str) else ""
         if not 10 <= len(description) <= 2000:
@@ -296,6 +321,10 @@ def manifest_check() -> int:
             )
         if description != description.strip():
             problems.append(f"{label} description has leading or trailing whitespace")
+        if label == "codex-delegate":
+            for disclosure, pattern in DISCLOSURES.items():
+                if pattern.search(description) is None:
+                    problems.append(f"codex-delegate description omits {disclosure}")
         hidden(problems, f"{label} description", description)
 
     for problem in problems:
@@ -358,6 +387,129 @@ def release_version_check() -> int:
     return 0
 
 
+def changelog_check() -> int:
+    """Require every release-note claim to carry adjacent, independently readable evidence."""
+    path = ROOT / "CHANGELOG.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    problems: list[str] = []
+    headings = [
+        match.group(1)
+        for line in lines
+        if (match := re.fullmatch(r"## \[([^]]+)](?: - \d{4}-\d{2}-\d{2})?", line))
+    ]
+    if not headings or headings[0] != "Unreleased":
+        problems.append("CHANGELOG.md must begin its release sections with [Unreleased]")
+    if len(headings) != len(set(headings)):
+        problems.append(f"CHANGELOG.md repeats a release section: {headings}")
+    for heading in headings[1:]:
+        if not SEMVER.fullmatch(heading):
+            problems.append(f"CHANGELOG.md release section {heading!r} is not SemVer 2.0.0")
+
+    in_release_sections = False
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"## \[[^]]+](?: - \d{4}-\d{2}-\d{2})?", line):
+            in_release_sections = True
+            continue
+        if line.startswith("[") and "]: " in line:
+            in_release_sections = False
+        if in_release_sections and line.startswith("### "):
+            section = line.removeprefix("### ")
+            if section not in CHANGELOG_SECTIONS:
+                problems.append(f"CHANGELOG.md:{index + 1} has unknown section {section!r}")
+        elif (
+            in_release_sections
+            and line
+            and CHANGELOG_ENTRY.match(line) is None
+            and CHANGELOG_EVIDENCE.fullmatch(line) is None
+        ):
+            problems.append(f"CHANGELOG.md:{index + 1} has unstructured release-note content")
+
+    for index, line in enumerate(lines):
+        if CHANGELOG_ENTRY.match(line) is None:
+            continue
+        line_number = index + 1
+        evidence_line = lines[index + 1] if index + 1 < len(lines) else ""
+        evidence = CHANGELOG_EVIDENCE.fullmatch(evidence_line)
+        if evidence is None:
+            problems.append(f"CHANGELOG.md:{line_number} entry has no adjacent evidence")
+            continue
+        relative = evidence.group("path")
+        needle = evidence.group("needle")
+        if relative == "CHANGELOG.md":
+            problems.append(f"CHANGELOG.md:{line_number} cites itself as evidence")
+            continue
+        if len(needle) < 20:
+            problems.append(
+                f"CHANGELOG.md:{line_number} evidence needle is too weak ({len(needle)} chars)"
+            )
+            continue
+        source = ROOT / relative
+        try:
+            source_text = source.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            problems.append(
+                f"CHANGELOG.md:{line_number} cannot read evidence path {relative!r}: {error}"
+            )
+            continue
+        if needle not in source_text:
+            problems.append(f"CHANGELOG.md:{line_number} claims {needle!r}, absent from {relative}")
+
+    for problem in problems:
+        print(f"FAIL {problem}")
+    if problems:
+        return 1
+    entry_count = sum(CHANGELOG_ENTRY.match(line) is not None for line in lines)
+    print(f"changelog: PASS ({entry_count} verified entries)")
+    return 0
+
+
+def publication_copy_check() -> int:
+    """Reject typographic dashes from the npm and repository-backed plugin payloads."""
+    problems: list[str] = []
+    package = load_object(ROOT / "package.json")
+    raw_package_files = package.get("files")
+    if not isinstance(raw_package_files, list) or not all(
+        isinstance(item, str) for item in raw_package_files
+    ):
+        print("FAIL package.json files must be a list of paths")
+        return 1
+    git = shutil.which("git")
+    if git is None:
+        print("FAIL cannot list tracked plugin payload: git is not installed")
+        return 1
+    completed = subprocess.run(  # noqa: S603 -- git is resolved from PATH above.
+        [git, "ls-files", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        print(f"FAIL cannot list tracked plugin payload: {completed.stderr.decode().strip()}")
+        return 1
+    tracked = {item.decode() for item in completed.stdout.split(b"\0") if item}
+    package_specs = {cast(str, item).rstrip("/") for item in raw_package_files}
+    npm_payload = {"package.json"} | {
+        relative
+        for relative in tracked
+        if any(relative == spec or relative.startswith(f"{spec}/") for spec in package_specs)
+    }
+    shipped_copy = (tracked | npm_payload) - PUBLICATION_COPY_EXCLUSIONS
+    for relative in sorted(shipped_copy):
+        for line_number, line in enumerate(
+            (ROOT / relative).read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if match := TYPOGRAPHIC_DASH.search(line):
+                problems.append(
+                    f"{relative}:{line_number} contains typographic dash U+{ord(match.group()):04X}"
+                )
+    for problem in problems:
+        print(f"FAIL {problem}")
+    if problems:
+        return 1
+    print(f"publication copy: PASS ({len(shipped_copy)} shipped files)")
+    return 0
+
+
 def main() -> int:
     command = sys.argv[1:]
     if command == ["dynamic-eval"]:
@@ -373,8 +525,13 @@ def main() -> int:
         return version_check()
     if command == ["release-versions"]:
         return release_version_check()
+    if command == ["changelog"]:
+        return changelog_check()
+    if command == ["publication-copy"]:
+        return publication_copy_check()
     print(
-        f"usage: {Path(sys.argv[0]).name} [dynamic-eval|manifests|versions|release-versions]",
+        f"usage: {Path(sys.argv[0]).name} "
+        "[dynamic-eval|manifests|versions|release-versions|changelog|publication-copy]",
         file=sys.stderr,
     )
     return 2

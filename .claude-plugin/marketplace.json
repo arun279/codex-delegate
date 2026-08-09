@@ -10,7 +10,7 @@
       "name": "codex-delegate",
       "source": "./",
       "category": "development",
-      "description": "Run one coding task through Codex. The Claude Code plugin includes broad PreToolUse hooks that inspect Bash, Monitor, and Workflow call text; its PermissionRequest hook is inert. The npm package ships only the standalone launcher and project documents. The launcher validates the live model pair, starts codex exec in a private process group, enforces a wall-clock deadline, reads the JSON terminal event, runs bounded teardown for that group, reports CLEANUP_FAILED if it survives, and returns the final message with reduced status. Requires macOS, /usr/bin/env with -S support, a python3 on PATH that starts with -I -S, and an installed, signed-in Codex CLI. Prompts and files Codex reads are sent to OpenAI."
+      "description": "Delegate one bounded coding task from Claude Code to the Codex CLI. The Claude Code plugin installs PreToolUse hooks that read every Bash, Monitor, and Workflow call's text; its PermissionRequest hook is inert. The npm package ships only the standalone launcher and project documents. The launcher runs bounded teardown of the Codex process group and reports CLEANUP_FAILED if the group survives. Prompts and files Codex reads are sent to OpenAI using your ChatGPT Codex allowance or API-billed usage. Requires macOS, /usr/bin/env with -S support, a python3 on PATH that starts with -I -S, and an installed, signed-in Codex CLI."
     }
   ]
 }
