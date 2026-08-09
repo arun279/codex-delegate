@@ -105,6 +105,21 @@ release_version_invariants() {
     python3 scripts/release-invariants.py release-versions
 }
 
+repository_push_invariants() {
+  local remote=$TMPDIR/repository-push.git
+  local remote_ref=refs/heads/release-gate
+  local local_head remote_head
+  git init --bare --quiet "$remote" || return
+  local_head=$(git rev-parse HEAD) || return
+  git push --quiet "$remote" "HEAD:$remote_ref" || return
+  remote_head=$(git --git-dir="$remote" rev-parse "$remote_ref") || return
+  if [ "$remote_head" != "$local_head" ]; then
+    echo "release gate: pushed $remote_head, expected $local_head" >&2
+    return 1
+  fi
+  echo "repository push: $remote_ref == $local_head"
+}
+
 if [ "${1:-}" = --timeout-self-test ]; then
   GATE_STEP_TIMEOUT_S=1
   GATE_SIGNAL_GRACE_S=0.1
@@ -116,6 +131,9 @@ else
   run_step "run suite" bash tests/run.sh
   run_step "lifecycle suite" bash tests/lifecycle.sh
   run_step "release workflow suite" bash tests/release-workflow.sh
+  export -f repository_push_invariants
+  run_step "repository push" bash -c repository_push_invariants
+  export -n -f repository_push_invariants
   run_step "corpus replay" python3 tests/corpus/replay.py
   run_step "determinism" bash tests/determinism.sh
 
@@ -150,6 +168,8 @@ else
   run_step "privacy scan" python3 scripts/privacy-scan.py
   run_step "manifest invariants" python3 scripts/release-invariants.py manifests
   run_step "version invariants" python3 scripts/release-invariants.py versions
+  run_step "changelog evidence" python3 scripts/release-invariants.py changelog
+  run_step "publication copy" python3 scripts/release-invariants.py publication-copy
   export -f release_version_invariants
   run_step "release version invariants" bash -c release_version_invariants
   export -n -f release_version_invariants

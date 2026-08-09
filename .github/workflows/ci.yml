@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -31,6 +33,9 @@ jobs:
           GOBIN="$RUNNER_TEMP/release-tools" go install github.com/zricethezav/gitleaks/v8@v8.30.1
           curl -fsSLo "$RUNNER_TEMP/shellcheck.tar.xz" \
             https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          printf '%s  %s\n' \
+            8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198 \
+            "$RUNNER_TEMP/shellcheck.tar.xz" | shasum -a 256 -c -
           tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
           cp "$RUNNER_TEMP/shellcheck-v0.11.0/shellcheck" "$RUNNER_TEMP/release-tools/shellcheck"
           echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
@@ -97,6 +102,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -116,12 +123,20 @@ jobs:
           GOBIN="$RUNNER_TEMP/release-tools" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           GOBIN="$RUNNER_TEMP/release-tools" go install github.com/zricethezav/gitleaks/v8@v8.30.1
           case "$(uname -m)" in
-            arm64) shellcheck_platform=darwin.aarch64 ;;
-            x86_64) shellcheck_platform=darwin.x86_64 ;;
+            arm64)
+              shellcheck_platform=darwin.aarch64
+              shellcheck_sha256=56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79
+              ;;
+            x86_64)
+              shellcheck_platform=darwin.x86_64
+              shellcheck_sha256=3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe4c6
+              ;;
             *) echo "unsupported macOS architecture: $(uname -m)" >&2; exit 2 ;;
           esac
           curl -fsSLo "$RUNNER_TEMP/shellcheck.tar.xz" \
             "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.${shellcheck_platform}.tar.xz"
+          printf '%s  %s\n' "$shellcheck_sha256" "$RUNNER_TEMP/shellcheck.tar.xz" |
+            shasum -a 256 -c -
           tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
           cp "$RUNNER_TEMP/shellcheck-v0.11.0/shellcheck" "$RUNNER_TEMP/release-tools/shellcheck"
           echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
