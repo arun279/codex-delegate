@@ -4,7 +4,7 @@ Hand one coding task from Claude Code to the OpenAI Codex CLI and get the result
 
 The launcher starts `codex exec` in a private process group, reads its JSON event stream, enforces a wall-clock deadline, returns the final message, runs bounded teardown for that group, and publishes one status record that says whether the group went away. `INT`, `TERM`, and `HUP` stop that same run and start the same teardown. It holds an advisory lock on its `pid` artifact until exit, so the runner can wait on the original launcher without trusting a reused PID. There is no detached mode, job registry, or recovery command: a launcher killed outright leaves Codex running in its own session with nothing to reap it.
 
-**Requires macOS**, `/usr/bin/env` with `-S` support, a `python3` on `PATH` that starts with `-I -S`, and the Codex CLI already installed and signed in. If those Python isolation flags are not active, the launcher prints a diagnostic and exits 2.
+**The launcher requires macOS**, `/usr/bin/env` with `-S` support, a `python3` on `PATH` that starts with `-I -S`, and the Codex CLI already installed and signed in. If those Python isolation flags are not active, the launcher prints a diagnostic and exits 2.
 
 > **Unofficial project.** Not affiliated with, endorsed by, or sponsored by OpenAI or Anthropic. OpenAI and Codex are trademarks of OpenAI, L.L.C. Claude and Claude Code are trademarks of Anthropic PBC. Those names identify interoperating software only. No endorsement is implied.
 
@@ -34,6 +34,8 @@ claude plugin update codex-delegate@arun279-plugins
 
 Restart Claude Code after updating so its cached skill and agent definitions refresh.
 
+Plugin installation and management require Claude Code. The standalone npm launcher described below does not.
+
 ## npm package
 
 The Claude Code plugin is the product. The `codex-delegate` npm package exists so that name resolves to this project rather than to an unrelated publisher. Its tarball contains exactly `package.json`, `bin/codex-delegate`, and the license, README, privacy, security, and changelog documents. The `bin` entry exposes that launcher as the `codex-delegate` executable, so `npx codex-delegate models` and `npx codex-delegate run ...` provide only the standalone terminal CLI documented below. A bare `npx codex-delegate` prints the CLI usage error because a `run` or `models` subcommand is required. The package does not contain or install the Claude Code plugin files.
@@ -41,6 +43,8 @@ The Claude Code plugin is the product. The `codex-delegate` npm package exists s
 ## From Claude Code
 
 Ask Claude to hand one bounded task to `codex-delegate:runner`. Good tasks include a scoped implementation, an investigation, data analysis, or an independent code review expressed as a normal prompt. The routing skill selects a live model and effort, chooses the sandbox, constructs the runner envelope, and checks the result.
+
+Each delegated run uses the account already signed in to the Codex CLI. ChatGPT sign-in consumes that account or workspace's Codex allowance and credits; API-key sign-in creates usage billed to that API organization. Parallel or repeated delegated runs each consume quota independently; the plugin supplies no shared, sponsored, or free capacity.
 
 A direct Workflow call passes the prompt string first and the options object second:
 
@@ -123,7 +127,7 @@ A stopped run uses verdict `STOPPED` and exits with 128 plus the signal number: 
 
 ## Privacy, trust, and cleanup limits
 
-Starting a run sends the prompt and whatever files Codex reads to OpenAI through the signed-in Codex CLI. The private run directory under `~/.codex-delegate/<runid>/` stores `pid`, `prompt.txt`, `events.jsonl`, `stderr.log`, an optional `final.txt`, and `status.json`. The root is owner-only and the prompt is transported to Codex through stdin, not its process arguments.
+Starting a run sends the prompt and whatever files Codex reads to OpenAI through the signed-in Codex CLI and spends that account's ChatGPT Codex allowance or API-billed usage. The private run directory under `~/.codex-delegate/<runid>/` stores `pid`, `prompt.txt`, `events.jsonl`, `stderr.log`, an optional `final.txt`, and `status.json`. The root is owner-only and the prompt is transported to Codex through stdin, not its process arguments.
 
 For `read-only` and `workspace-write`, launcher state is outside Codex's writable roots. With `danger-full-access`, Codex runs as the same user and can modify any local artifact, including its run directory. In that sandbox, local status is operational output, not tamper-proof attestation.
 
@@ -135,7 +139,7 @@ See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete bou
 
 ## Requirements
 
-The project deliberately supports macOS only. It requires `codex` and `python3` on `PATH`, `/usr/bin/env` with `-S` support, and a Python runtime that starts with both `-I` and `-S`. If those isolation flags are not active, the launcher prints a diagnostic and exits 2. Verify the CLI and sign-in before the first run:
+This project supports macOS only, both the Claude Code plugin and the standalone launcher. The launcher requires `codex` and `python3` on `PATH`, `/usr/bin/env` with `-S` support, and a Python runtime that starts with both `-I` and `-S`. If those isolation flags are not active, the launcher prints a diagnostic and exits 2. Verify the Codex CLI and sign-in before the first run:
 
 ```bash
 codex --version
