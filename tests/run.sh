@@ -128,6 +128,19 @@ check '[ "$RC" = 2 ] && grep -q "not supported" "$WORK/effort.out"' \
   >"$WORK/runid.out" 2>&1
 RC=$?
 check '[ "$RC" = 2 ] && [ ! -e "$WORK/escape" ]' "a traversing run id is rejected"
+STUB_ARGV_CAPTURE=$WORK/absent-prompt.argv \
+  "$BIN" run --prompt-file "$WORK/absent-prompt.txt" --sandbox read-only \
+  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --runid absent-prompt >"$WORK/absent-prompt.out" 2>"$WORK/absent-prompt.err"
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "cannot read prompt file" "$WORK/absent-prompt.err" &&
+       [ -s "$WORK/runs/absent-prompt/pid" ] &&
+       [ -e "$WORK/runs/absent-prompt/prompt.txt" ] &&
+       [ ! -e "$WORK/absent-prompt.argv" ] &&
+       [ "$(json_ "$WORK/runs/absent-prompt/status.json" verdict)" = '"'"'"LAUNCH_ERROR"'"'"' ] &&
+       [ "$(json_ "$WORK/runs/absent-prompt/status.json" exit_code)" = 2 ] &&
+       python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["diagnostic"] != "cannot read prompt file: " + sys.argv[2])'"'"' "$WORK/runs/absent-prompt/status.json" "$WORK/absent-prompt.txt"' \
+  "a missing prompt file records a terminal validation failure before Codex starts"
 
 head_ "native exec invocation and prompt integrity"
 STUB_ARGV_CAPTURE=$WORK/argv.txt STUB_STDIN_CAPTURE=$WORK/stdin.txt STUB_MODE=ok \
@@ -147,6 +160,16 @@ check 'grep -Fxq "sandbox=workspace-write" "$WORK/argv.txt" && grep -Fxq "networ
 check 'grep -Fxq "add_dir=$WORK/extra" "$WORK/argv.txt" && grep -Fxq "schema=$WORK/schema.json" "$WORK/argv.txt"' \
   "native add-dir and output-schema flags survive"
 check '! grep -Fq "Prompt body" "$WORK/argv.txt"' "prompt text is absent from captured argv"
+
+STUB_ARGV_CAPTURE=$WORK/read-only-add-dir.argv STUB_MODE=ok \
+  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+  --cwd "$WORK/job" --add-dir "$HOME" --deadline 10 --model gpt-5.6-sol \
+  --effort medium --runid read-only-add-dir \
+  >"$WORK/read-only-add-dir.out" 2>"$WORK/read-only-add-dir.err"
+RC=$?
+check '[ "$RC" = 0 ] && grep -Fxq "sandbox=read-only" "$WORK/read-only-add-dir.argv" &&
+       grep -Fxq "add_dir=$HOME" "$WORK/read-only-add-dir.argv"' \
+  "read-only forwards --add-dir HOME without rejecting it"
 
 head_ "runner-shaped stdin prompt transport"
 printf 'ordinary prompt through stdin\n' >"$WORK/stdin-ordinary.expected"
@@ -198,28 +221,31 @@ STUB_MODE=ok STUB_STDIN_CAPTURE=$WORK/stdin-empty.stdin \
   >"$WORK/stdin-empty.out" 2>"$WORK/stdin-empty.err" <<'CODEX_DELEGATE_PROMPT_88888888888888888888888888888888'
 CODEX_DELEGATE_PROMPT_88888888888888888888888888888888
 RC=$?
-check '[ "$RC" = 2 ] && grep -q "the prompt is empty" "$WORK/stdin-empty.err" &&
+check '[ "$RC" = 12 ] && grep -q "the prompt is empty" "$WORK/stdin-empty.err" &&
        cmp -s "$WORK/stdin-empty.expected" "$WORK/runs/stdin-empty/prompt.txt" &&
-       [ ! -e "$WORK/stdin-empty.stdin" ]' \
+       [ ! -e "$WORK/stdin-empty.stdin" ] &&
+       [ "$(json_ "$WORK/runs/stdin-empty/status.json" verdict)" = '"'"'"LAUNCH_ERROR"'"'"' ]' \
   "an empty stdin body is stored empty and rejected before Codex starts"
 
 STUB_MODE=ok "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" \
   --deadline 10 --model gpt-5.6-sol --effort medium --runid stdin-closed \
   0<&- >"$WORK/stdin-closed.out" 2>"$WORK/stdin-closed.err"
 RC=$?
-check '[ "$RC" = 2 ] &&
+check '[ "$RC" = 12 ] &&
        grep -q "cannot read prompt from stdin: standard input is closed" "$WORK/stdin-closed.err" &&
-       ! grep -q "Traceback" "$WORK/stdin-closed.err"' \
+       ! grep -q "Traceback" "$WORK/stdin-closed.err" &&
+       [ "$(json_ "$WORK/runs/stdin-closed/status.json" verdict)" = '"'"'"LAUNCH_ERROR"'"'"' ]' \
   "a closed stdin is a clean pre-launch validation failure"
 
 STUB_MODE=ok "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" \
   --deadline 10 --model gpt-5.6-sol --effort medium --runid stdin-unreadable \
   0>/dev/null >"$WORK/stdin-unreadable.out" 2>"$WORK/stdin-unreadable.err"
 RC=$?
-check '[ "$RC" = 2 ] &&
+check '[ "$RC" = 12 ] &&
        grep -q "cannot read prompt from stdin: reading standard input failed" "$WORK/stdin-unreadable.err" &&
        ! grep -q "standard input is closed" "$WORK/stdin-unreadable.err" &&
-       ! grep -q "Traceback" "$WORK/stdin-unreadable.err"' \
+       ! grep -q "Traceback" "$WORK/stdin-unreadable.err" &&
+       [ "$(json_ "$WORK/runs/stdin-unreadable/status.json" verdict)" = '"'"'"LAUNCH_ERROR"'"'"' ]' \
   "an unreadable stdin reports the failed read instead of a missing stream"
 
 head_ "terminal event and status contract"
@@ -236,6 +262,13 @@ check '[ "$(stat -f %Lp "$RD/status.json")" = 400 ]' "status is published read-o
 check '[ "$(json_ "$RD/status.json" terminal_event)" = '"'"'"turn.completed"'"'"' ] &&
        python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["final_message_path"] != sys.argv[2])'"'"' "$RD/status.json" "$RD/final.txt"' \
   "terminal type and final path are actionable"
+
+run_case native_mismatch native-output 0
+RD=$WORK/runs/native-output
+printf 'LONGER NATIVE DOCUMENT\n' >"$WORK/native-output.expected"
+check 'cmp -s "$WORK/native-output.expected" "$RD/final.txt" &&
+       [ "$(json_ "$RD/status.json" verdict)" = '"'"'"COMPLETED"'"'"' ]' \
+  "an intact native -o document is neither replaced nor reported missing"
 
 STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
   --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \

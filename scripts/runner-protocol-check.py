@@ -1,64 +1,59 @@
 #!/usr/bin/env python3
-"""Execute the Bash agents/runner.md prescribes, so an instruction that cannot run cannot ship.
-
-Three wait prescriptions shipped without ever being executed: one that never ended when the
-launcher died, one built on a `sleep` the harness blocks, and one that timed a clock instead of
-the job. A regular expression over the runner proves a string is present. It cannot prove the
-command parses, survives this plugin's own Bash guard, or ends when the launcher ends. This runs
-them against a real process and checks exactly those three things.
-"""
+"""Execute all three runner Bash blocks against the real launcher and stub Codex."""
 
 from __future__ import annotations
 
 import importlib.util
 import os
 import re
-import shlex
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 from types import ModuleType
-from typing import cast
+from typing import Callable, cast
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNNER = ROOT / "agents" / "runner.md"
+LAUNCHER = Path(os.environ.get("CODEX_DELEGATE_TEST_BIN", ROOT / "bin" / "codex-delegate"))
 GUARD = ROOT / "hooks" / "guard-bash.py"
+STUB = ROOT / "tests" / "stub"
 BLOCK = re.compile(r"^```bash\n(.*?)^```$", re.DOTALL | re.MULTILINE)
 PLACEHOLDER = re.compile(r"<[A-Z_]+>")
-BOUND = re.compile(r"-ge (\d+)")
-RUNID = "runner-0123456789abcdef"
+PID_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_PID=([1-9][0-9]*)\n\Z")
+RUNID_RECORD = re.compile(rb"CODEX_DELEGATE_RUNID=(runner-[0-9a-f]{32})\n\Z")
+END_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_ENDED=([1-9][0-9]*)\n\Z")
 DELIMITER = "CODEX_DELEGATE_PROMPT_" + "0123456789abcdef" * 2
-# A launcher that is already dead must be seen as dead within this, whatever the wait's own bound.
-DEATH_BUDGET_S = 15.0
 
 
-def blocks() -> list[str]:
+def blocks() -> tuple[str, str, str]:
     found = cast("list[str]", BLOCK.findall(RUNNER.read_text(encoding="utf-8")))
     if len(found) != 3:
-        raise SystemExit(
-            f"runner-protocol: {RUNNER.name} must hold the launcher, wait, and report blocks "
-            f"in that order, found {len(found)} bash blocks"
-        )
-    return found
+        raise ValueError(f"runner.md has {len(found)} Bash blocks, expected three")
+    return found[0], found[1], found[2]
 
 
 def fill(block: str, label: str, values: dict[str, str]) -> str:
+    used: set[str] = set()
+
     def replace(match: re.Match[str]) -> str:
         name = match.group(0)
         if name not in values:
-            raise SystemExit(
-                f"runner-protocol: FAIL: the {label} block uses {name}, which it is not allowed "
-                "to know, so this check cannot execute what the runner prescribes"
-            )
+            raise ValueError(f"{label} block uses unsupported placeholder {name}")
+        used.add(name)
         return values[name]
 
-    return PLACEHOLDER.sub(replace, block)
+    result = PLACEHOLDER.sub(replace, block)
+    unused = sorted(set(values) - used)
+    if unused:
+        raise ValueError(f"{label} fixture does not exercise placeholders {unused}")
+    return result
 
 
-def bash(script: str, env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603  # Runs the checked-in runner prescription without a shell.
+def bash(script: str, env: dict[str, str], timeout: float = 10) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603 -- Executes a checked-in runner prescription.
         ["/bin/bash", "-c", script],
         capture_output=True,
         text=True,
@@ -68,160 +63,399 @@ def bash(script: str, env: dict[str, str], timeout: float) -> subprocess.Complet
     )
 
 
-def parses(script: str, work: Path, name: str) -> bool:
-    path = work / name
-    path.write_text(script, encoding="utf-8")
-    checked = subprocess.run(  # noqa: S603  # Syntax-only bash on a file this check just wrote.
-        ["/bin/bash", "-n", str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
+def launch(script: str, output_path: Path, env: dict[str, str]) -> int:
+    with output_path.open("wb") as output:
+        completed = subprocess.run(  # noqa: S603 -- Executes the checked-in launcher block.
+            ["/bin/bash", "-c", script],
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            env=env,
+            timeout=30,
+            check=False,
+        )
+    return completed.returncode
+
+
+def start(script: str, output_path: Path, env: dict[str, str]) -> subprocess.Popen[bytes]:
+    output = output_path.open("wb")
+    process = subprocess.Popen(  # noqa: S603 -- Executes the checked-in launcher block.
+        ["/bin/bash", "-c", script], stdout=output, stderr=subprocess.STDOUT, env=env
     )
-    return checked.returncode == 0
+    output.close()
+    return process
+
+
+def records(path: Path) -> tuple[int | None, str | None, bool]:
+    pid: int | None = None
+    runid: str | None = None
+    ended = False
+    try:
+        lines = path.read_bytes().splitlines(keepends=True)
+    except OSError:
+        return pid, runid, ended
+    for line in lines:
+        pid_match = PID_RECORD.fullmatch(line)
+        runid_match = RUNID_RECORD.fullmatch(line)
+        end_match = END_RECORD.fullmatch(line)
+        if pid is None and pid_match is not None:
+            pid = int(pid_match.group(1))
+        elif pid is not None and runid is None and runid_match is not None:
+            runid = runid_match.group(1).decode("ascii")
+        elif pid is not None and end_match is not None and int(end_match.group(1)) == pid:
+            ended = True
+    return pid, runid, ended
+
+
+def without_records(path: Path) -> bytes:
+    lines = path.read_bytes().splitlines(keepends=True)
+    pid: bytes | None = None
+    pid_index: int | None = None
+    runid_index: int | None = None
+    end_indices: list[int] = []
+    for index, line in enumerate(lines):
+        pid_match = PID_RECORD.fullmatch(line)
+        runid_match = RUNID_RECORD.fullmatch(line)
+        end_match = END_RECORD.fullmatch(line)
+        if pid is None and pid_match is not None:
+            pid = pid_match.group(1)
+            pid_index = index
+        elif pid is not None and runid_index is None and runid_match is not None:
+            runid_index = index
+        elif pid is not None and end_match is not None and end_match.group(1) == pid:
+            end_indices.append(index)
+    skipped = {item for item in (pid_index, runid_index) if item is not None}
+    if end_indices:
+        skipped.add(end_indices[-1])
+    return b"".join(line for index, line in enumerate(lines) if index not in skipped)
+
+
+def wait_for_records(path: Path, need_runid: bool, timeout: float = 10) -> tuple[int, str | None]:
+    until = time.monotonic() + timeout
+    while time.monotonic() < until:
+        pid, runid, _ = records(path)
+        if pid is not None and (runid is not None or not need_runid):
+            return pid, runid
+        time.sleep(0.02)
+    raise RuntimeError(f"timed out waiting for launcher records in {path}")
 
 
 def guard() -> ModuleType:
     spec = importlib.util.spec_from_file_location("guard_bash", GUARD)
     if spec is None or spec.loader is None:
-        raise SystemExit(f"runner-protocol: cannot load {GUARD}")
+        raise RuntimeError(f"cannot load {GUARD}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-def hurry(block: str) -> str:
-    """Shrink only the bound that holds a live launcher, leaving the startup grace alone."""
-    lines = (BOUND.sub("-ge 1", line) if "kill -0" in line else line for line in block.splitlines())
-    return "\n".join(lines) + "\n"
-
-
-def check_wait(block: str, env: dict[str, str], run_dir: Path) -> list[str]:
-    problems: list[str] = []
-    pid_path = run_dir / "pid"
-    fast = hurry(block)
-
-    # The launcher records its pid a moment after the background call returns. Until then it is
-    # starting, not finished, and reading it as finished returns an empty file as the result.
-    child = subprocess.Popen(["/bin/sleep", "120"])  # noqa: S603  # Stands in for a live launcher.
-    late = f"sleep 2; printf '%s\\n' {child.pid} > {shlex.quote(str(pid_path))}"
-    writer = subprocess.Popen(["/bin/bash", "-c", late])  # noqa: S603  # Records that pid late.
+def terminate_group(path: Path) -> None:
     try:
-        starting = bash(fast, env, 90).stdout.strip()
-        if starting != "RUNNING":
+        os.killpg(int(path.read_text(encoding="ascii").strip()), signal.SIGKILL)
+    except (OSError, ValueError):
+        pass
+
+
+def startup_probe_launcher(work: Path) -> Path:
+    source = LAUNCHER.read_text(encoding="utf-8")
+    pattern = re.compile(r"^RUNNER_STARTUP_SECONDS = [0-9]+$", re.MULTILINE)
+    if len(pattern.findall(source)) != 1:
+        raise RuntimeError("launcher does not define one literal RUNNER_STARTUP_SECONDS")
+    probe = work / "startup-probe-launcher"
+    probe.write_text(pattern.sub("RUNNER_STARTUP_SECONDS = 1", source), encoding="utf-8")
+    probe.chmod(0o755)
+    return probe
+
+
+def check_protocol(launcher: str, wait: str, report: str, work: Path) -> list[str]:
+    problems: list[str] = []
+    bin_dir = work / "bin"
+    home = work / "home"
+    run_root = work / "runs"
+    bin_dir.mkdir()
+    home.mkdir()
+    run_root.mkdir()
+    (bin_dir / "codex-delegate").symlink_to(LAUNCHER)
+    env = {
+        "PATH": f"{bin_dir}:{STUB}:/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": str(home),
+        "CODEX_DELEGATE_HOME": str(run_root),
+        "STUB_MODE": "ok",
+    }
+    launcher_script = fill(
+        launcher,
+        "launcher",
+        {
+            "<ARGS>": "--sandbox read-only --deadline 60",
+            "<PROMPT>": "a prompt body",
+            "<DELIMITER>": DELIMITER,
+        },
+    )
+
+    (run_root / "runner-a1b2c3d4e5f6a7b8").mkdir()
+    success_output = work / "success.out"
+    if launch(launcher_script, success_output, env) != 0:
+        return [f"launcher block failed: {success_output.read_text(errors='replace')}"]
+    pid, runid, ended = records(success_output)
+    if pid is None or runid is None or not ended:
+        return [f"launcher block did not publish complete records: {(pid, runid, ended)!r}"]
+    if runid == "runner-a1b2c3d4e5f6a7b8" or not (run_root / runid / "pid").is_file():
+        problems.append("launcher did not mint a collision-safe ID with a PID artifact")
+    wait_script = fill(wait, "wait", {"<OUTPUT_FILE>": str(success_output)})
+    wait_result = bash(wait_script, env)
+    if wait_result.returncode != 0 or wait_result.stdout.strip() != "ENDED":
+        problems.append("completed runner-wait did not return ENDED")
+    report_script = fill(report, "report", {"<OUTPUT_FILE>": str(success_output)})
+    report_result = bash(report_script, env)
+    if report_result.returncode != 0 or report_result.stdout.encode() != without_records(
+        success_output
+    ):
+        problems.append("runner-report did not preserve completed launcher output byte for byte")
+
+    no_end_output = work / "complete-without-end.out"
+    success_lines = success_output.read_bytes().splitlines(keepends=True)
+    no_end_output.write_bytes(
+        b"".join(line for line in success_lines if not END_RECORD.fullmatch(line))
+    )
+    no_end_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(no_end_output)}), env)
+    if (
+        no_end_report.returncode != 0
+        or no_end_report.stdout.encode() != without_records(no_end_output)
+        or "no result" in no_end_report.stdout
+    ):
+        problems.append(
+            "a complete result without the end record became a contradictory no-result report"
+        )
+
+    second_output = work / "second.out"
+    if launch(launcher_script, second_output, env) != 0 or records(second_output)[1] == runid:
+        problems.append("two runner launches did not receive distinct launcher-minted IDs")
+
+    failure_output = work / "failure.out"
+    failure_script = fill(
+        launcher,
+        "launcher",
+        {
+            "<ARGS>": "--sandbox read-only --deadline 60 --not-a-runner-flag",
+            "<PROMPT>": "a prompt body",
+            "<DELIMITER>": DELIMITER,
+        },
+    )
+    failure_rc = launch(failure_script, failure_output, env)
+    failure_wait = bash(fill(wait, "wait", {"<OUTPUT_FILE>": str(failure_output)}), env)
+    failure_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(failure_output)}), env)
+    if failure_rc != 2 or failure_wait.stdout.strip() != "ENDED":
+        problems.append("pre-allocation launcher failure did not terminate its wait")
+    if (
+        failure_report.returncode != 0
+        or failure_report.stdout.encode() != without_records(failure_output)
+        or "unrecognized arguments" not in failure_report.stdout
+    ):
+        problems.append("runner-report did not preserve a pre-allocation launcher diagnostic")
+
+    live_output = work / "live.out"
+    stub_pid = work / "live-stub.pid"
+    descendant_pid = work / "live-descendant.pid"
+    live_env = {
+        **env,
+        "STUB_MODE": "hold",
+        "STUB_PID_CAPTURE": str(stub_pid),
+        "STUB_DESCENDANT_CAPTURE": str(descendant_pid),
+    }
+    live = start(launcher_script, live_output, live_env)
+    waiter: subprocess.Popen[str] | None = None
+    try:
+        live_pid, live_runid = wait_for_records(live_output, True)
+        if live_runid is None:
+            raise RuntimeError("live launcher has no run ID")
+        with live_output.open("ab") as output:
+            output.write(f"CODEX_DELEGATE_LAUNCHER_ENDED={live_pid}\n".encode("ascii"))
+        if not records(live_output)[2]:
+            problems.append("protocol fixture could not append its premature end marker")
+        premature_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(live_output)}), env)
+        if premature_report.returncode != 2 or "still running" not in premature_report.stderr:
+            problems.append("runner-report trusted an output marker over the live PID lock")
+        live_wait = fill(wait, "wait", {"<OUTPUT_FILE>": str(live_output)})
+        waiter = subprocess.Popen(  # noqa: S603 -- Executes the checked-in wait block.
+            ["/bin/bash", "-c", live_wait],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        time.sleep(2)
+        if waiter.poll() is not None:
             problems.append(
-                f"a launcher that has not recorded its pid yet makes the wait print {starting!r}, "
-                "so a job that started normally is reported as one that produced nothing"
+                "runner-wait trusted an output marker while the launcher still held its PID lock"
             )
-        alive = bash(fast, env, 60).stdout.strip()
-        if alive != "RUNNING":
+        os.kill(live_pid, signal.SIGKILL)
+        live.wait(timeout=10)
+        waiter_stdout, waiter_stderr = waiter.communicate(timeout=10)
+        if waiter.returncode != 0 or waiter_stdout.strip() != "ENDED":
             problems.append(
-                f"a live launcher makes the wait print {alive!r}, so the runner cannot tell "
-                "waiting from finished"
+                f"runner-wait did not survive SIGKILL: {waiter_stdout!r} {waiter_stderr!r}"
             )
-    except subprocess.TimeoutExpired:
-        problems.append("the wait ignores its own bound, so it never yields the turn back")
-        return problems
+        killed_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(live_output)}), env)
+        if (
+            killed_report.returncode != 0
+            or "launcher ended before it could report" not in killed_report.stdout
+        ):
+            problems.append("runner-report did not diagnose a killed launcher with no result")
     finally:
-        writer.wait()
-        child.kill()
-        child.wait()
+        if waiter is not None and waiter.poll() is None:
+            waiter.kill()
+            waiter.wait()
+        if live.poll() is None:
+            live.kill()
+            live.wait()
+        terminate_group(stub_pid)
+        terminate_group(descendant_pid)
 
-    started = time.monotonic()
+    absent_output = work / "absent.out"
+    empty_output = work / "empty.out"
+    pid_only_output = work / "pid-only.out"
+    unreadable_output = work / "unreadable.out"
+    empty_output.touch()
+    unreadable_output.write_text("not readable\n", encoding="ascii")
+    unreadable_output.chmod(0)
+    exited = subprocess.Popen(["/usr/bin/true"])  # noqa: S603
+    dead_pid = exited.pid
+    exited.wait()
+    pid_only_output.write_text(f"CODEX_DELEGATE_LAUNCHER_PID={dead_pid}\n", encoding="ascii")
+    pid_only_script = fill(wait, "wait", {"<OUTPUT_FILE>": str(pid_only_output)})
     try:
-        ended = bash(block, env, DEATH_BUDGET_S).stdout.strip()
+        pid_only_result = bash(pid_only_script, env, 6)
     except subprocess.TimeoutExpired:
-        problems.append(
-            f"the wait was still running {DEATH_BUDGET_S}s after the launcher died, so it is "
-            "timing a clock rather than the job"
-        )
-        return problems
-    if ended != "ENDED":
-        problems.append(f"a dead launcher makes the wait print {ended!r} rather than 'ENDED'")
-    if time.monotonic() - started > DEATH_BUDGET_S:
-        problems.append("the wait outlived the launcher it is waiting on")
+        problems.append("pid-only output for a dead launcher did not terminate within 6 seconds")
+    else:
+        if pid_only_result.returncode != 0 or pid_only_result.stdout.strip() != "ENDED":
+            problems.append("pid-only output for a dead launcher did not return ENDED")
 
-    pid_path.unlink()
+    unresolved: list[tuple[str, subprocess.Popen[str]]] = []
     try:
-        missing = bash(BOUND.sub("-ge 1", block), env, DEATH_BUDGET_S).stdout.strip()
-    except subprocess.TimeoutExpired:
-        problems.append("the wait never ends when the launcher recorded no pid at all")
-        return problems
-    if missing != "ENDED":
-        problems.append(f"a launcher that never recorded a pid makes the wait print {missing!r}")
-    return problems
+        for label, path in (
+            ("absent", absent_output),
+            ("empty", empty_output),
+        ):
+            unresolved.append(
+                (
+                    label,
+                    subprocess.Popen(  # noqa: S603 -- Executes the checked-in wait block.
+                        ["/bin/bash", "-c", fill(wait, "wait", {"<OUTPUT_FILE>": str(path)})],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                    ),
+                )
+            )
+        time.sleep(6)
+        for label, process in unresolved:
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                problems.append(
+                    f"{label} runner output ended before its startup grace: {stdout!r} {stderr!r}"
+                )
+    finally:
+        for _, process in unresolved:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
 
-
-def check_report(block: str, env: dict[str, str], run_dir: Path, work: Path) -> list[str]:
-    problems: list[str] = []
-    output = work / "job.out"
-    filled = fill(block, "report", {"<RUNID>": RUNID, "<OUTPUT_FILE>": str(output)})
-    payload = "\n--- FINAL MESSAGE (/x/final.txt) ---\nbody\n\n--- STATUS ---\n{}\n"
-    output.write_text(payload, encoding="utf-8")
-    verbatim = bash(filled, env, 30).stdout
-    if verbatim != payload:
-        problems.append("the report call does not return the launcher output byte for byte")
-
-    output.write_text("", encoding="utf-8")
-    silent = bash(filled, env, 30).stdout
-    if not silent.strip():
-        problems.append(
-            "a launcher killed before it reported returns nothing, which a caller reads as an "
-            "empty but successful result"
+    startup_probe = startup_probe_launcher(work)
+    for label, path in (("absent", absent_output), ("empty", empty_output)):
+        result = subprocess.run(  # noqa: S603 -- Executes a bounded copy of the real launcher.
+            [str(startup_probe), "runner-wait", str(path)],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=4,
+            check=False,
         )
-    elif str(run_dir) not in silent:
-        problems.append("the silent-death report does not name the run directory")
+        if result.returncode != 0 or result.stdout.strip() != "ENDED":
+            problems.append(f"{label} runner output did not end after its bounded startup grace")
+
+    for label, path in (
+        ("absent", absent_output),
+        ("empty", empty_output),
+        ("unreadable", unreadable_output),
+    ):
+        result = bash(fill(report, "report", {"<OUTPUT_FILE>": str(path)}), env)
+        lines = result.stdout.splitlines()
+        if (
+            result.returncode != 0
+            or len(lines) != 1
+            or not lines[0].startswith("codex-delegate:")
+            or "Traceback" in result.stderr
+        ):
+            problems.append(f"{label} report input does not return one no-result diagnostic")
+    unreadable_output.chmod(0o600)
+
+    no_command_output = work / "no-command.out"
+    no_command_output.write_text("bash: codex-delegate: command not found\n", encoding="ascii")
+    no_command_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(no_command_output)}), env)
+    if (
+        no_command_report.returncode != 0
+        or "command not found" not in no_command_report.stdout
+        or "codex-delegate:" not in no_command_report.stdout
+    ):
+        problems.append("a failed kickoff did not preserve its diagnostic and add launcher context")
     return problems
 
 
 def main() -> int:
-    launcher, wait, report = blocks()
     problems: list[str] = []
-    with tempfile.TemporaryDirectory() as raw:
-        work = Path(raw)
-        home = work / "home"
-        run_root = work / "runs"
-        run_dir = run_root / RUNID
-        run_dir.mkdir(parents=True)
-        env = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "HOME": str(home),
-            "CODEX_DELEGATE_HOME": str(run_root),
-        }
-        filled = {
-            "launcher": fill(
-                launcher,
-                "launcher",
-                {
-                    "<RUNID>": RUNID,
+    try:
+        launcher, wait, report = blocks()
+        if wait.strip() != 'codex-delegate runner-wait "<OUTPUT_FILE>"':
+            problems.append("runner wait is not the one-line runner-wait command")
+        if report.strip() != 'codex-delegate runner-report "<OUTPUT_FILE>"':
+            problems.append("runner report is not the one-line runner-report command")
+        if "--runner-handoff" not in launcher or "--runid" in launcher:
+            problems.append("launcher block does not delegate run-ID generation to the launcher")
+        starts_codex = cast(Callable[[str], bool], guard().starts_codex)
+        for label, script in (("launcher", launcher), ("wait", wait), ("report", report)):
+            values = {
+                "launcher": {
                     "<ARGS>": "--sandbox read-only --deadline 60",
                     "<PROMPT>": "a prompt body",
                     "<DELIMITER>": DELIMITER,
                 },
-            ),
-            # The wait may not know the output file: reading it is what Codex can forge.
-            "wait": fill(wait, "wait", {"<RUNID>": RUNID}),
-            "report": fill(
-                report, "report", {"<RUNID>": RUNID, "<OUTPUT_FILE>": str(work / "job.out")}
-            ),
-        }
-        starts_codex = guard().starts_codex
-        for name, script in filled.items():
-            if not parses(script, work, f"{name}.sh"):
-                problems.append(f"the {name} block is not valid bash")
-            if starts_codex(script):
-                problems.append(f"this plugin's own Bash guard denies the {name} block")
+                "wait": {"<OUTPUT_FILE>": str(ROOT / "runner-protocol-output")},
+                "report": {"<OUTPUT_FILE>": str(ROOT / "runner-protocol-output")},
+            }[label]
+            filled = fill(script, label, values)
+            parsed = subprocess.run(  # noqa: S603 -- Syntax check of a checked-in Bash block.
+                ["/bin/bash", "-n"], input=filled, text=True, capture_output=True, check=False
+            )
+            if parsed.returncode != 0:
+                problems.append(f"{label} block is not valid Bash")
+            if starts_codex(filled):
+                problems.append(f"the Bash guard denies the {label} block")
         if not problems:
-            problems.extend(check_wait(filled["wait"], env, run_dir))
-            problems.extend(check_report(report, env, run_dir, work))
+            with tempfile.TemporaryDirectory() as raw:
+                base = Path(raw).resolve()
+                physical = base / "physical"
+                physical.mkdir()
+                alias = base / "symlinked-temp"
+                alias.symlink_to(physical, target_is_directory=True)
+                work = alias / "protocol"
+                work.mkdir()
+                problems.extend(check_protocol(launcher, wait, report, work.resolve()))
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+        problems.append(str(error))
 
     for problem in problems:
         print(f"runner-protocol: FAIL: {problem}")
     if problems:
         return 1
-    print("runner-protocol: PASS: 3 prescribed blocks parse, pass the guard, and end with the job")
+    print(
+        "runner-protocol: PASS: all 3 blocks execute; minted-ID, collision, success, "
+        "startup-failure, pre-RUNID-death, lock-authority, SIGKILL, symlinked-temp, "
+        "absent-output, missing-end-record, no-result, and verbatim-report paths pass"
+    )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

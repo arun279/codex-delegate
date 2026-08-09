@@ -2,7 +2,7 @@
   "name": "codex-delegate",
   "displayName": "Codex Delegate",
   "version": "0.1.2",
-  "description": "Run one coding task through Codex. The Claude Code plugin includes broad PreToolUse hooks that inspect Bash, Monitor, and Workflow call text; its PermissionRequest hook is inert. The npm package ships only the standalone launcher and project documents. The launcher validates the live model pair, starts codex exec in a private process group, enforces a wall-clock deadline, reads the JSON terminal event, tears that group down, and returns the final message with reduced status. Requires macOS, /usr/bin/env with -S support, a python3 on PATH that starts with -I -S, and an installed, signed-in Codex CLI. Prompts and files Codex reads are sent to OpenAI.",
+  "description": "Run one coding task through Codex. The Claude Code plugin includes broad PreToolUse hooks that inspect Bash, Monitor, and Workflow call text; its PermissionRequest hook is inert. The npm package ships only the standalone launcher and project documents. The launcher validates the live model pair, starts codex exec in a private process group, enforces a wall-clock deadline, reads the JSON terminal event, runs bounded teardown for that group, reports CLEANUP_FAILED if it survives, and returns the final message with reduced status. Requires macOS, /usr/bin/env with -S support, a python3 on PATH that starts with -I -S, and an installed, signed-in Codex CLI. Prompts and files Codex reads are sent to OpenAI.",
   "author": {
     "name": "Arun Krishnamurthy",
     "url": "https://github.com/arun279"
