@@ -2,81 +2,52 @@
 
 <!-- markdownlint-disable MD024 -->
 
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `.claude-plugin/plugin.json` is authoritative.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+No version of this project has been published. The first release number remains an owner decision, so every entry below stays under Unreleased. Entries describe the shipped product surface a plugin or launcher user would notice, not the gate, check, and CI machinery that produced it.
 
 ## [Unreleased]
 
 ### Added
 
-- Required a completed, successful push CI run for the release commit before any publish-side action.
-- Verified both existing and newly created plugin tags resolve to the release commit before publishing.
-- Added a smart-HTTP plugin lifecycle gate that proves git-source installs exclude untracked files and only receive changed bytes after a version bump.
-- Pinned both strict Claude manifest validations in the release gate and CI with a contract assertion.
-- Pinned the launcher's isolated-startup preflight probe with a contract assertion.
+- Added private process-group isolation for each Codex turn.
+  <!-- evidence: bin/codex-delegate :: start_new_session=True -->
+- Added terminal-event capture that ends a process which does not exit by itself.
+  <!-- evidence: tests/lifecycle.sh :: first terminal event wins even when Codex does not exit -->
+- Added a bounded deadline and cleanup ladder for the inherited Codex process group.
+  <!-- evidence: tests/lifecycle.sh :: deadline kills the complete inherited process group -->
+- Added a reduced 16-field status record.
+  <!-- evidence: tests/run.sh :: status has exactly the reduced 16-field schema -->
 
 ### Changed
 
-- Clarified the shared npm and plugin description with the exact launcher requirements, the plugin's broad hooks, and the npm tarball's launcher-only scope.
-- Documented both the default `workspace-write` protection for Git directories and the narrower `--add-dir` opt-in using Git's absolute common directory for trusted Git metadata changes.
-- Corrected hook, terminal-event, teardown, and runner-validation claims to match their executable boundaries.
-- Removed Lefthook pre-commit glob filters, since every command names its own repository inputs and the filters depended on an uninstalled matcher's semantics.
+- Required the launcher to start with `python3 -I -S`, preventing caller-controlled Python import paths and site initialization.
+  <!-- evidence: tests/security.sh :: #!/usr/bin/env -S python3 -I -S -->
+- Disclosed that every delegated run spends the signed-in user's ChatGPT Codex allowance or API-billed usage.
+  <!-- evidence: PRIVACY.md :: Every parallel, repeated, or retried delegated run consumes usage independently. -->
+- Documented the default `workspace-write` protection for Git directories and the narrower `--add-dir` opt-in that lets a trusted caller allow Git metadata changes.
+  <!-- evidence: README.md :: pass that common Git directory as its own writable root with -->
+- Corrected the shipped hook, terminal-event, teardown and runner-validation claims to match what the code actually enforces.
+  <!-- evidence: README.md :: runs bounded teardown for that group, and publishes one status record -->
+- Moved run-ID generation out of the model and into the launcher, and replaced the inline wait and report with bounded launcher commands.
+  <!-- evidence: agents/runner.md :: makes the launcher mint the run ID -->
 
 ### Fixed
 
-- Moved runner ID generation into the launcher and waiting/reporting into bounded launcher commands, with the existing PID file locked until launcher exit.
-- Made pre-run-ID waits end on a dead recorded launcher or a bounded no-PID startup grace, and made reports preserve a complete status block when only the trailing handoff record is missing.
-- Enforced the deadline during prompt ingestion and continuously productive stdout, and made post-launch event I/O failures tear down Codex and publish status.
-- Kept draining Codex stdout during bounded post-terminal settlement while preserving Codex's intact native final-output document.
-- Published terminal status for prompt failures after run allocation.
-- Coupled the documented prompt-file validation and post-allocation prompt-staging exits to the launcher's fixed return paths.
-- Probed the launcher's exact `/usr/bin/env -S python3 -I -S` startup path during preflight, so unsupported environments report the failure before dispatch.
+- Ended a pre-run-ID wait on a dead recorded launcher or a bounded startup grace, instead of on elapsed time.
+  <!-- evidence: bin/codex-delegate :: def runner_wait(output_path: str) -->
+- Enforced the deadline during prompt ingestion and while Codex keeps stdout productive, where it previously did neither.
+  <!-- evidence: bin/codex-delegate :: class PromptDeadline -->
+- Kept draining Codex stdout through a bounded post-terminal settlement, so an intact native final-output document is no longer lost.
+  <!-- evidence: tests/lifecycle.sh :: post-terminal settlement keeps draining -->
+- Published a terminal status record for a prompt failure that happens after the run directory is allocated.
+  <!-- evidence: tests/run.sh :: a missing prompt file records a terminal validation failure before Codex starts -->
+- Coupled the documented prompt-file validation exit to the launcher's actual return path.
+  <!-- evidence: README.md :: path validation exits 2 -->
 
 ### Security
 
-- Extended the dynamic-evaluation tripwire to cover dotted evaluation calls and `os` execution, shell, and process-spawn functions without flagging regular-expression compilation.
+- Rejected `workspace-write` runs whose writable roots overlap the owner-only run store.
+  <!-- evidence: tests/run.sh :: workspace-write cannot overlap launcher control state -->
 
-## [0.1.2] - 2026-08-05
-
-### Added
-
-- Recorded the launcher pid in the run directory, so a caller can wait on the process instead of a clock.
-- Added `scripts/runner-protocol-check.py` to the release gate. It executes the Bash `agents/runner.md` prescribes: three earlier wait prescriptions shipped without ever being run.
-
-### Security
-
-- Replaced the shell launcher with a direct Python entry point that starts under `python3 -I -S`, so a module in the caller's working directory or on `PYTHONPATH` can no longer shadow a standard-library import the launcher makes. It now requires `/usr/bin/env` with `-S` support and a `python3` that honors `-I -S`; if those isolation flags are not active, the launcher prints a diagnostic and exits 2.
-
-### Fixed
-
-- Took the final message from the event stream the launcher already parses, so a message Codex emitted before cleanup terminated it is no longer discarded and reported as `OUTPUT_MISSING`.
-- Held the runner alive across the harness's 600 second Bash ceiling, so a job the harness backgrounded is no longer destroyed and reported to the caller as progress.
-- Ended that wait on the launcher process rather than on elapsed time, so a job that finishes early is returned at once and a launcher killed without publishing status is reported as a death instead of an empty success.
-- Started the launcher as a background Bash call. A foreground call is handed off alive only for some command shapes, and measurably kills the launcher otherwise: a bare command reached the ceiling and was backgrounded, while the same command behind a variable assignment was killed at 600s and left `verdict STOPPED, exit_code 143`. Backgrounding also puts the wait on the path every run takes rather than only runs past ten minutes.
-- Sized `maxTurns` so a wait call that loses its 600,000 ms timeout and dies at the 120 second default still cannot exhaust the budget before the deadline a run can reach.
-- Corrected every shipped claim that dispatch from Claude Code is a single blocking call, including the published npm and marketplace copy, which no check had ever read. `scripts/claim-check.py` now reads that copy with the rest of the documentation and rejects the claim while the runner waits on the launcher. The npm, plugin, and marketplace descriptions are now one string the check requires all three to carry.
-- Withdrew the promise that a run cannot outlive the agent that started it. Codex is started in its own session, so a launcher killed with `KILL` leaves it running: `tests/lifecycle.sh` now asserts that survival rather than quietly cleaning it up.
-- Said what `--deadline` bounds. It starts when Codex starts, so a `--deadline 1` command measured 7 seconds of wall clock behind a 5 second catalog lookup, and the teardown ladder runs after it expires.
-- Stopped describing process-group cleanup as unconditional. The ladder waits a bounded grace after each signal and reports `CLEANUP_FAILED` when the group is still there, which is why that verdict exists.
-- Named the fourth thing that ends a direct `run`, which the README had left out: Codex exiting without a terminal event, which returns `NO_TERMINAL_EVENT` at once rather than waiting for the deadline.
-
-## [0.1.1] - 2026-08-03
-
-### Changed
-
-- Reduced the public CLI to one blocking `run` command and the live `models` catalog.
-- Made the foreground launcher own terminal-event detection, the wall-clock deadline, direct process-group cleanup, final-message output, and one 16-field status record.
-- Required an explicit sandbox and a non-empty prompt for every run.
-- Simplified catalog handling to live model listing, default selection, and exact pair validation.
-- Kept prompt transport on stdin and owner-only run storage outside `workspace-write` roots.
-- Kept the Bash and Workflow guards, inert permission hook, macOS preflight, corpus, privacy scan, deterministic suite, and release gates.
-
-### Requirements and limits
-
-- macOS only, with `codex` and Python 3 on `PATH`.
-- Cleanup covers the private Codex process group. A descendant that creates another group or session is outside that boundary.
-- `danger-full-access` status is operational output, not same-user tamper attestation.
-- Requested model identity cannot attest which model the service ultimately used.
-
-[Unreleased]: https://github.com/arun279/codex-delegate/compare/codex-delegate--v0.1.2...HEAD
-[0.1.2]: https://github.com/arun279/codex-delegate/releases/tag/codex-delegate--v0.1.2
-[0.1.1]: https://github.com/arun279/codex-delegate/releases/tag/codex-delegate--v0.1.1
+[Unreleased]: https://github.com/arun279/codex-delegate/commits/main

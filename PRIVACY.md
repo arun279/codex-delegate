@@ -6,6 +6,8 @@
 
 When you start a run, the plugin invokes the `codex` CLI you installed and signed in to. Codex sends your prompt and the files it reads to OpenAI under your account and their terms. This is the same network path used by a direct `codex exec` call.
 
+The run also spends that signed-in account's quota. ChatGPT sign-in consumes the account or workspace's Codex allowance and credits; API-key sign-in creates usage billed to that API organization. Every parallel, repeated, or retried delegated run consumes usage independently. `codex-delegate` does not provide a separate quota, sponsor the request, or combine multiple runs into one charge.
+
 The selected sandbox bounds local access:
 
 - `read-only` cannot write project files;
