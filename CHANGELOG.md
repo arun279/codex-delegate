@@ -17,11 +17,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The ver
 ### Changed
 
 - Clarified the shared npm and plugin description with the exact launcher requirements, the plugin's broad hooks, and the npm tarball's launcher-only scope.
+- Documented both the default `workspace-write` protection for Git directories and the narrower `--add-dir` opt-in using Git's absolute common directory for trusted Git metadata changes.
+- Corrected hook, terminal-event, teardown, and runner-validation claims to match their executable boundaries.
 - Removed Lefthook pre-commit glob filters, since every command names its own repository inputs and the filters depended on an uninstalled matcher's semantics.
 
 ### Fixed
 
-- Generated runner IDs in the launch shell and stripped their handoff header by content, so models cannot invent colliding IDs and header changes cannot leak into job output.
+- Moved runner ID generation into the launcher and waiting/reporting into bounded launcher commands, with the existing PID file locked until launcher exit.
+- Made pre-run-ID waits end on a dead recorded launcher or a bounded no-PID startup grace, and made reports preserve a complete status block when only the trailing handoff record is missing.
+- Enforced the deadline during prompt ingestion and continuously productive stdout, and made post-launch event I/O failures tear down Codex and publish status.
+- Kept draining Codex stdout during bounded post-terminal settlement while preserving Codex's intact native final-output document.
+- Published terminal status for prompt failures after run allocation.
+- Coupled the documented prompt-file validation and post-allocation prompt-staging exits to the launcher's fixed return paths.
 - Probed the launcher's exact `/usr/bin/env -S python3 -I -S` startup path during preflight, so unsupported environments report the failure before dispatch.
 
 ### Security

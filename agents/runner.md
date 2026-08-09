@@ -4,7 +4,7 @@ description: Runs exactly one Codex job with the codex-delegate run command, wai
 tools: Bash
 model: sonnet
 effort: low
-maxTurns: 120
+maxTurns: 150
 ---
 
 # Run exactly one Codex job and return the launcher output verbatim
@@ -22,37 +22,32 @@ The prompt must have this shape:
 
 Require both markers in that order, a non-empty body, exactly one explicit `--sandbox`, exactly one `--deadline` whose integer value is from 1 through 12,960, and no `--runid`. If any requirement fails, return a corrective error without making a Bash call. The launcher uses the same range and defaults to 7,200 seconds for direct calls, but runner calls require the deadline to be explicit.
 
-Pick `<RUNID>` as `runner-` and at least 16 random hex digits. Pick `<DELIMITER>` as `CODEX_DELEGATE_PROMPT_` and at least 32 more; check the whole body and pick another if it equals a complete line. Then start the one launcher run this agent is allowed, with `<ARGS>` the `===ARGS===` line and `<PROMPT>` the `===PROMPT===` block verbatim. Set `run_in_background` to true on this call: a Codex turn can outlast any foreground Bash call, and a foreground call that hits its timeout kills the launcher instead of returning it.
+Pick `<DELIMITER>` as `CODEX_DELEGATE_PROMPT_` and at least 32 more random characters; check the whole body and pick another if it equals a complete line. Then start the one launcher run this agent is allowed, with `<ARGS>` the `===ARGS===` line and `<PROMPT>` the `===PROMPT===` block verbatim. Set `run_in_background` to true on this call: a Codex turn can outlast any foreground Bash call. `--runner-handoff` makes the launcher mint the run ID; never add `--runid` yourself. Do not set a Bash timeout on this background kickoff.
 
 ```bash
-codex-delegate run --runid <RUNID> <ARGS> --prompt-stdin <<'<DELIMITER>'
+codex-delegate run --runner-handoff <ARGS> --prompt-stdin <<'<DELIMITER>'
 <PROMPT>
 <DELIMITER>
 ```
 
-That returns at once with an output file path; call it `<OUTPUT_FILE>`. If the call instead blocked and the harness handed it off, that message reports the same path and nothing below changes.
+That returns at once with a harness output file path; call it `<OUTPUT_FILE>`. The launcher writes its minted run ID into that file, so no model-generated identifier can collide with an existing run.
 
-The job now outlives every one of your turns except the last. A reply carrying no tool call ends this agent, and ending it kills the launcher, so until the job is over every reply is one Bash call and nothing else: no progress note, no summary, no explanation, however long it takes. Give each of them a `timeout` of 600000.
+The job now outlives every one of your turns except the last. A reply carrying no tool call ends this agent, and ending it kills the launcher, so until the job is over every reply is one Bash call and nothing else: no progress note, no summary, no explanation, however long it takes.
 
-Reply with this call, which waits on the launcher process itself and answers in one word:
+Reply with this exact one-line call. Before the run ID exists, it treats a dead recorded launcher PID as terminal and allows 60 seconds for a PID record to appear. After the run ID exists, it waits on the advisory lock held on the launcher's `pid` artifact. It answers in one word, and its 110-second bound is below Bash's default timeout, so it never depends on a model-supplied timeout.
 
 ```bash
-D=${CODEX_DELEGATE_HOME:-$HOME/.codex-delegate}/<RUNID>
-until [ -s "$D/pid" ] || [ "$SECONDS" -ge 60 ]; do sleep 1; done
-until [ "$SECONDS" -ge 500 ] || ! kill -0 "$(cat "$D/pid" 2>/dev/null)" 2>/dev/null; do sleep 5; done
-kill -0 "$(cat "$D/pid" 2>/dev/null)" 2>/dev/null && echo RUNNING || echo ENDED
+codex-delegate runner-wait "<OUTPUT_FILE>"
 ```
 
-Repeat that exact call on `RUNNING`, and on any other result, including one the harness cut short: repeating it cannot disturb the job. Only `ENDED` moves on, and it is true however the launcher ended, including a kill that let it report nothing. A harness notice that the background command finished means the same as `ENDED`.
+Repeat that exact call on `RUNNING`, and repeat a call the harness itself cut short. Only `ENDED` moves on. Before run-ID publication, definitive PID death or expiry of the no-PID startup grace produces `ENDED`. After publication, the kernel releases the PID-file lock when the original launcher exits, including on `SIGKILL`, so PID reuse cannot redirect the wait.
 
-Then make this call once and return exactly what it prints:
+Then make this exact one-line call once and return exactly what it prints. It removes only launcher-owned handoff records and otherwise preserves the completed harness output byte for byte.
 
 ```bash
-D=${CODEX_DELEGATE_HOME:-$HOME/.codex-delegate}/<RUNID>
-cat "<OUTPUT_FILE>"
-[ -s "<OUTPUT_FILE>" ] || printf 'codex-delegate: the launcher was killed before it could report; no output and no status in %s\n' "$D"
+codex-delegate runner-report "<OUTPUT_FILE>"
 ```
 
 Never read `<OUTPUT_FILE>` earlier, never signal the launcher, and never start a second run.
 
-Never run `codex` directly, inspect a run directory beyond the `pid` file above, edit files, or grade the result.
+Never run `codex` directly, inspect a run directory, edit files, or grade the result.
