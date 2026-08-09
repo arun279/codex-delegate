@@ -169,6 +169,45 @@ case "${STUB_MODE:-ok}" in
     trap '' INT TERM
     while :; do sleep 0.2; done
     ;;
+  native_mismatch)
+    emit '{"type":"item.completed","item":{"type":"agent_message","text":"SHORT STREAM"}}'
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    printf 'LONGER NATIVE DOCUMENT\n' >"$OUT"
+    ;;
+  terminal_tail)
+    emit '{"type":"item.completed","item":{"type":"agent_message","text":"SHORT STREAM"}}'
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    printf 'NATIVE TAIL DOCUMENT\n' >"$OUT"
+    python3 -c '
+import os
+
+batch = b"{\"type\":\"item.started\"}\n" * 4096
+for _ in range(43):
+    os.write(1, batch)
+'
+    ;;
+  flood)
+    trap '' INT TERM
+    python3 -c '
+import os
+import signal
+import time
+
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+until = time.monotonic() + float(os.environ.get("STUB_FLOOD_SECONDS", "8"))
+batch = b"{\"type\":\"item.started\"}\n" * 4096
+while time.monotonic() < until:
+    os.write(1, batch)
+'
+    while :; do sleep 0.2; done
+    ;;
+  capture_io_fail)
+    trap '' INT TERM
+    python3 -c 'import os; os.write(1, b"{\"type\":\"item.started\"}\n" * 4096)'
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    while :; do sleep 0.2; done
+    ;;
   multi_message)
     emit '{"type":"item.completed","item":{"type":"agent_message","text":"an interim message"}}'
     emit '{"type":"item.completed","item":{"type":"agent_message","text":"THE LAST MESSAGE"}}'

@@ -24,15 +24,15 @@ DOCS = [
     ROOT / "PRIVACY.md",
     ROOT / "commands" / "uninstall.md",
 ]
-BASH_CEILING_S = 600
-# Measured on the harness: a Bash call given no explicit timeout is killed at this, and only a
-# call that reaches the ceiling above is handed off alive. The turn budget must survive a runner
-# that forgets the timeout, because a pinned agent definition cannot pin a per-call parameter.
+# Measured on the harness: a Bash call given no explicit timeout is killed at this. Every
+# prescribed wait must return before it because a pinned agent cannot pin a per-call parameter.
 BASH_DEFAULT_TIMEOUT_S = 120
+MIN_RUNNER_WAIT_SECONDS = 110
 # Launcher time outside its own deadline: the 15s catalog subprocess plus the signal ladder.
 LAUNCHER_OVERHEAD_S = 60
 # The launcher call turn, then the report call and the reply that returns it.
 FIXED_TURNS = 3
+TURN_MARGIN = 8
 STATUS_SEPARATOR = "--- STATUS ---"
 BASH_BLOCK = re.compile(r"^```bash\n.*?^```$", re.DOTALL | re.MULTILINE)
 ONE_CALL = re.compile(r"\b(?:one|single)[ -](?:blocking|call)\b", re.IGNORECASE)
@@ -40,6 +40,7 @@ BLOCKS = re.compile(r"\bblock(?:s|ing|ed)\b", re.IGNORECASE)
 DISPATCH = re.compile(r"\b(?:runner|caller|jobs?)\b|Claude Code", re.IGNORECASE)
 SENTENCE = re.compile(r"[^.\n]+")
 RETIRED_FLAGS = {"--mode", "--base", "--commit", "--uncommitted", "--lane"}
+EXTERNAL_FLAGS = {"--git-common-dir", "--path-format", "--version"}
 RETIRED_COMMANDS = {"start", "wait", "status", "reap"}
 RETIRED_STATUS = {
     "verdict_exit_code",
@@ -112,6 +113,54 @@ def launcher_constant(source: str, name: str) -> int:
     raise ValueError(f"launcher constant {name} was not found")
 
 
+def exception_return(source: str, function: str, exception: str) -> int | str:
+    tree = ast.parse(source)
+    target = next(
+        (node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function),
+        None,
+    )
+    if target is None:
+        raise ValueError(f"launcher function {function} was not found")
+    for handler in (node for node in ast.walk(target) if isinstance(node, ast.ExceptHandler)):
+        if not isinstance(handler.type, ast.Name) or handler.type.id != exception:
+            continue
+        returns = [node for node in ast.walk(handler) if isinstance(node, ast.Return)]
+        if len(returns) != 1 or returns[0].value is None:
+            raise ValueError(f"{function}'s {exception} handler has no single return")
+        value = returns[0].value
+        if isinstance(value, ast.Constant) and isinstance(value.value, int):
+            return value.value
+        if (
+            isinstance(value, ast.Subscript)
+            and isinstance(value.value, ast.Name)
+            and value.value.id == "EXIT"
+            and isinstance(value.slice, ast.Constant)
+            and isinstance(value.slice.value, str)
+        ):
+            return value.slice.value
+        raise ValueError(f"{function}'s {exception} handler has a dynamic return")
+    raise ValueError(f"{function} has no {exception} handler")
+
+
+def prompt_exit_contract(source: str, readme: str, exits: dict[str, int]) -> list[str]:
+    problems: list[str] = []
+    source_exit = exception_return(source, "run", "PromptSourceError")
+    staging_verdict = exception_return(source, "run", "UserError")
+    if not isinstance(source_exit, int) or not isinstance(staging_verdict, str):
+        return ["launcher prompt handlers do not expose fixed exit outcomes"]
+    if staging_verdict not in exits:
+        return [f"prompt staging returns unknown verdict {staging_verdict}"]
+    source_claim = f"Initial `--prompt-file` path validation exits {source_exit}."
+    staging_claim = (
+        "Empty prompt input, stdin read failures, prompt storage failures, and Codex launch "
+        f"errors are `{staging_verdict}` ({exits[staging_verdict]})."
+    )
+    for claim in (source_claim, staging_claim):
+        if claim not in readme:
+            problems.append(f"README prompt-exit claim does not match the launcher: {claim}")
+    return problems
+
+
 def turns_needed(reachable: int, per_turn: int) -> int:
     return FIXED_TURNS + -(-(reachable + LAUNCHER_OVERHEAD_S) // per_turn)
 
@@ -131,66 +180,50 @@ def runner_wait_contract(source: str, runner: str) -> list[str]:
             f"the runner keys on {STATUS_SEPARATOR!r}, which Codex can put in its own final "
             "message and the launcher flushes ahead of the real status"
         )
-    if not re.search(r"""record_pid\(os\.path\.join\(run_dir, "pid"\)\)""", source):
-        problems.append(
-            "the launcher no longer records its pid in the run directory, so the runner's wait "
-            "has nothing to tie itself to"
-        )
-    root = re.search(
-        r"""os\.environ\.get\("(?P<env>[A-Z_]+)", str\(Path\.home\(\) / "(?P<home>[^"]+)"\)\)""",
-        source,
-    )
-    if root is None:
-        problems.append("the launcher's run root is no longer a literal the runner can derive")
-    else:
-        env, default = root.group("env"), root.group("home")
-        if f"${{{env}:-$HOME/{default}}}" not in runner:
-            problems.append(
-                f"the runner looks for the pid file outside {env} or $HOME/{default}, so it waits "
-                "on a directory the launcher never writes"
-            )
-    loops = re.findall(r"^until (.+); do sleep (\d+); done$", runner, re.MULTILINE)
+    blocks = BASH_BLOCK.findall(runner)
+    if len(blocks) != 3:
+        problems.append(f"the runner has {len(blocks)} Bash blocks, expected launch, wait, report")
+        return problems
+    if "--runner-handoff" not in blocks[0] or "--runid" in blocks[0]:
+        problems.append("the launcher, rather than the runner model, must mint the run ID")
+    if 'codex-delegate runner-wait "<OUTPUT_FILE>"' not in blocks[1]:
+        problems.append("the runner does not use the launcher-owned runner-wait command")
+    if 'codex-delegate runner-report "<OUTPUT_FILE>"' not in blocks[2]:
+        problems.append("the runner does not use the launcher-owned runner-report command")
     turns = re.search(r"^maxTurns: *(\d+) *$", runner.split("---", 2)[1], re.MULTILINE)
-    if not loops or turns is None:
-        problems.append(
-            "the runner declares no bounded wait loop and maxTurns, so its wait cannot be checked"
-        )
+    if turns is None:
+        problems.append("the runner declares no maxTurns budget")
         return problems
-    bound = 0
-    total = 0
-    for condition, interval in loops:
-        limit = re.search(r"-ge (\d+)", condition)
-        if limit is None:
-            problems.append(f"the wait loop on {condition!r} has no bound, so it never yields")
-            return problems
-        held = int(limit.group(1))
-        total += held
-        if int(interval) >= held:
+    try:
+        bound = launcher_constant(source, "RUNNER_WAIT_SECONDS")
+    except ValueError:
+        problems.append("launcher has no fixed RUNNER_WAIT_SECONDS bound")
+        return problems
+    if bound >= BASH_DEFAULT_TIMEOUT_S:
+        problems.append(
+            f"runner-wait can take {bound}s and reach the {BASH_DEFAULT_TIMEOUT_S}s default"
+        )
+    if bound < MIN_RUNNER_WAIT_SECONDS:
+        problems.append(
+            f"runner-wait's {bound}s bound is below the measured {MIN_RUNNER_WAIT_SECONDS}s "
+            "turn-cost floor"
+        )
+    try:
+        startup_bound = launcher_constant(source, "RUNNER_STARTUP_SECONDS")
+    except ValueError:
+        problems.append("launcher has no fixed pre-RUNID startup bound")
+    else:
+        if startup_bound >= bound:
             problems.append(
-                f"a {interval}s sleep cannot step a {held}s wait, so the loop overshoots the "
-                "bound it is supposed to hold"
+                f"pre-RUNID startup bound {startup_bound}s does not fit inside the {bound}s wait"
             )
-        if "kill -0" in condition and '"$D/pid"' in condition:
-            bound = held
-    if bound == 0:
-        problems.append(
-            "no wait loop ends on the launcher pid, so the wait outlives the job it waits on"
-        )
-        return problems
-    if total >= BASH_CEILING_S:
-        problems.append(
-            f"the wait's bounds total {total}s and reach the {BASH_CEILING_S}s Bash ceiling, so "
-            "the wait is itself handed off into a message the runner must not answer"
-        )
     reachable = launcher_constant(source, "MAX_DEADLINE")
     declared = int(turns.group(1))
-    healthy = turns_needed(reachable, bound)
-    degraded = turns_needed(reachable, min(bound, BASH_DEFAULT_TIMEOUT_S))
-    if declared < degraded:
+    required = turns_needed(reachable, bound) + TURN_MARGIN
+    if declared <= required:
         problems.append(
-            f"maxTurns {declared} covers a {reachable}s run in {healthy} turns at the {bound}s "
-            f"bound but needs {degraded} when a wait call is given no timeout and dies at "
-            f"{BASH_DEFAULT_TIMEOUT_S}s, so the runner abandons the job it started"
+            f"maxTurns {declared} cannot cover {reachable}s in {bound}s waits plus "
+            f"{TURN_MARGIN} replacement turns with spare capacity; it must exceed {required}"
         )
     return problems
 
@@ -245,7 +278,7 @@ def main() -> int:
     }
     joined = "\n".join([*documents.values(), *listings.values()])
     tokens = inline_tokens(joined)
-    documented_flags = set(re.findall(r"--[a-z][a-z0-9-]*", joined)) - {"--version"}
+    documented_flags = set(re.findall(r"--[a-z][a-z0-9-]*", joined)) - EXTERNAL_FLAGS
     documented_status = status_fields & tokens
     problems = runner_wait_contract(source, documents[RUNNER])
     problems += dispatch_claims(
@@ -260,6 +293,11 @@ def main() -> int:
 
     if commands != {"run", "models"}:
         problems.append(f"launcher commands are {sorted(commands)}, expected run and models")
+    internal_commands = set(re.findall(r'sys\.argv\[1:2\] == \["(runner-[a-z-]+)"\]', source))
+    if internal_commands != {"runner-wait", "runner-report"}:
+        problems.append(
+            f"internal commands are {sorted(internal_commands)}, expected runner-wait/report"
+        )
     missing_flags = flags - documented_flags
     extra_flags = documented_flags - flags
     if missing_flags:
@@ -293,6 +331,50 @@ def main() -> int:
             f"the npm, plugin, and marketplace descriptions are {len(published)} different "
             "strings, so correcting the product only corrects some of them"
         )
+    readme = documents[ROOT / "README.md"]
+    skill = documents[ROOT / "skills" / "routing" / "SKILL.md"]
+    security = documents[ROOT / "SECURITY.md"]
+    status_reference = documents[ROOT / "skills" / "routing" / "reference" / "status-and-trust.md"]
+    privacy = documents[ROOT / "PRIVACY.md"]
+    git_docs = {
+        "README.md": readme,
+        "SECURITY.md": security,
+        "skills/routing/SKILL.md": skill,
+        "skills/routing/reference/status-and-trust.md": status_reference,
+    }
+    git_common_command = "git rev-parse --path-format=absolute --git-common-dir"
+    for label, text in git_docs.items():
+        if not all(term in text for term in ("`--add-dir`", "Git metadata", "opt in")):
+            problems.append(f"{label} does not document the explicit --add-dir Git-metadata opt-in")
+        if git_common_command not in text:
+            problems.append(f"{label} does not name Git's absolute common-directory command")
+    false_git_claims = (
+        "cannot stage or commit",
+        "does not include Git metadata",
+        "cannot stage, commit, branch, or stash",
+        "Git metadata changes therefore belong in the trusted caller",
+    )
+    for claim in false_git_claims:
+        if claim in "\n".join(git_docs.values()):
+            problems.append(f"sandbox documentation retains blanket false claim {claim!r}")
+    if not all(term in readme and term in skill for term in ("`.git`", "linked worktree")):
+        problems.append("README and routing skill omit default Git-metadata protection")
+    if "do not compose" not in readme or "do not compose" not in skill:
+        problems.append("sandbox documentation omits the permission-profile incompatibility")
+    problems += prompt_exit_contract(source, readme, exits)
+    if "runner rejects an absent or invalid value before Bash starts" in skill:
+        problems.append("routing skill claims model instructions are deterministic validation")
+    if "statically recognizable" not in readme or "statically recognizable" not in privacy:
+        problems.append("hook documentation overstates malformed-call enforcement")
+    for path in (ROOT / "README.md", ROOT / "skills" / "routing" / "SKILL.md"):
+        if "exactly one terminal event" not in documents[path]:
+            problems.append(
+                f"{path.relative_to(ROOT)} omits duplicate-terminal STREAM_ERROR semantics"
+            )
+    if any("tears that group down" in item for item in published) or not all(
+        "CLEANUP_FAILED" in item for item in published
+    ):
+        problems.append("published descriptions claim teardown is unconditional")
     if "SessionEnd" in hooks or (ROOT / "hooks" / "session-end.py").exists():
         problems.append("background session-end cleanup remains installed")
 

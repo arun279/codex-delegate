@@ -53,9 +53,9 @@ await agent(
 - Never pass `model:`, `effort:`, or `tools:` in `agent()` options. Those configure the Claude wrapper, not Codex. Put Codex selection in `===ARGS===`.
 - Use `isolation: 'worktree'` for parallel implementation calls that would otherwise share a checkout.
 - Make `promptBody` non-empty and self-contained. Include the absolute repo path, goal, acceptance criteria, boundaries, required checks, and required report.
-- Always pass an explicit sandbox and a deadline from 1 through 12,960. The launcher defaults to 7,200 seconds when called directly, but the runner rejects an absent or invalid value before Bash starts.
+- Always pass an explicit sandbox and a deadline from 1 through 12,960. The launcher defaults to 7,200 seconds when called directly, but the runner instructions require one explicit valid value before any Bash call.
 
-The runner starts exactly one launcher run, as a background Bash call so that no Codex turn is bounded by a Bash timeout, and then holds its own turn by waiting on the launcher process, one bounded call per turn, until that process ends. The launcher's own deadline still bounds the run. None of that reaches the call site: `agent()` resolves once, with the launcher's output or with the single `codex-delegate:` line below. Do not add polling, retrying, or a second launcher call of your own, because the wait is already the runner's and a second one can only cut the job short or read text Codex was free to write.
+The runner starts exactly one launcher run in the background, lets the launcher mint its run ID, and then uses launcher-owned wait and report commands. Each wait is bounded below Bash's default timeout. During startup it recognizes a dead launcher before run-ID publication; after publication it follows the advisory lock on the existing `pid` artifact until the original launcher exits. None of that reaches the call site: `agent()` resolves once with the launcher's output or diagnostic output ending in a `codex-delegate:` line when no status result exists. Do not add polling, retrying, or a second launcher call of your own.
 
 ## `===ARGS===` vocabulary
 
@@ -67,22 +67,25 @@ The runner starts exactly one launcher run, as a background Bash call so that no
 | `--add-dir DIR` | Repeatable extra writable root. |
 | `--schema FILE` | Final-message JSON Schema. |
 | `--deadline SECONDS` | Required for runner calls, from 1 through 12,960; direct launcher calls default to 7,200. |
-| `--runid ID` | Runner-owned; it names the run directory the runner waits on. Do not pass it. |
+| `--runid ID` | Direct terminal calls only. The launcher mints runner IDs; do not pass it. |
+| `--runner-handoff` | Runner-owned discovery mode; do not pass it. |
 | `--model M` | Exact slug from `codex-delegate models`. |
 | `--effort LEVEL` | Effort advertised for that model. |
 
 The runner appends `--prompt-stdin`; do not put either prompt-source flag in `===ARGS===`.
 
+By default, `workspace-write` protects `.git` and the resolved Git directory of a linked worktree beneath an existing writable root. For a trusted task that needs Git metadata changes, opt in narrowly: run `git rev-parse --path-format=absolute --git-common-dir` from the target worktree in the caller and pass that common Git directory as a separate writable root with `--add-dir`. It contains the linked worktree's shared object database and worktree-specific metadata. This grants write access to all metadata beneath the directory, so do not add it for an untrusted task. Permission profiles do not compose with the launcher's required `--sandbox` flag.
+
 ## Read the verdict
 
-The runner returns the final-message section followed by status. Read `verdict`, `exit_code`, and `diagnostic`, then inspect the requested artifacts or diff before reporting success. A return with no status block is not a result: the final-message section is text Codex chose and can imitate anything, including a status block or a harness notice. A single `codex-delegate:` line instead of a status block means the launcher was killed before it could report, which is a failed run.
+The runner returns the final-message section followed by status. Read `verdict`, `exit_code`, and `diagnostic`, then inspect the requested artifacts or diff before reporting success. A return with no status block is not a result: the preceding text can be a kickoff error or partial launcher output. A trailing `codex-delegate:` line supplies launcher context for that failed run.
 
 | verdict | meaning |
 | --- | --- |
-| `COMPLETED` (0) | Codex emitted completion and produced a final message. |
-| `FAILED` (10) | Codex emitted `turn.failed`; read `diagnostic`. |
+| `COMPLETED` (0) | The stream contained exactly one terminal event, it was `turn.completed`, and a final message exists. |
+| `FAILED` (10) | The stream contained exactly one terminal event and it was `turn.failed`; read `diagnostic`. |
 | `DEADLINE` (11) | The wall-clock limit arrived first. |
-| `LAUNCH_ERROR` (12) | Codex could not be launched. |
+| `LAUNCH_ERROR` (12) | Prompt ingestion or storage failed after the initial prompt-file path check, or Codex could not launch. |
 | `CLEANUP_FAILED` (13) | The private process group survived the full signal ladder. |
 | `STREAM_ERROR` (17) | The JSONL stream was malformed, truncated, oversized, or duplicated its terminal event. |
 | `PLATFORM_UNSUPPORTED` (18) | The host is not macOS. |

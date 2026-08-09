@@ -11,6 +11,8 @@ if not sys.flags.isolated or not sys.flags.no_site:
 
 # Startup isolation is verified before importing modules that can be shadowed.
 import argparse
+import errno
+import fcntl
 import json
 import os
 import platform
@@ -19,6 +21,7 @@ import secrets
 import selectors
 import shutil
 import signal
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -28,8 +31,16 @@ from typing import BinaryIO, TypedDict, cast
 PROGRAM = "codex-delegate"
 DEFAULT_DEADLINE = 7200
 MAX_DEADLINE = 12960
+RUNNER_WAIT_SECONDS = 110
+RUNNER_STARTUP_SECONDS = 60
 EVENT_LIMIT = 16 * 1024 * 1024
 LINE_LIMIT = 1024 * 1024
+READ_BATCH = 32
+TERMINAL_SETTLE_IDLE_SECONDS = 0.5
+TERMINAL_SETTLE_LIMIT_SECONDS = 2.5
+RUNNER_PID_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_PID=([1-9][0-9]*)\n\Z")
+RUNNER_RUNID_RECORD = re.compile(rb"CODEX_DELEGATE_RUNID=(runner-[0-9a-f]{32})\n\Z")
+RUNNER_END_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_ENDED=([1-9][0-9]*)\n\Z")
 TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 EXIT = {
     "COMPLETED": 0,
@@ -57,6 +68,7 @@ class Arguments(argparse.Namespace):
     effort: str | None
     deadline: int
     runid: str | None
+    runner_handoff: bool
 
 
 class Model(TypedDict):
@@ -106,6 +118,20 @@ class UserError(Exception):
     pass
 
 
+class PromptSourceError(UserError):
+    pass
+
+
+class PromptDeadline(Exception):
+    pass
+
+
+class PromptStopped(Exception):
+    def __init__(self, number: int) -> None:
+        super().__init__(number)
+        self.number = number
+
+
 def positive_deadline(raw: str) -> int:
     try:
         value = int(raw)
@@ -143,6 +169,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--effort")
     run.add_argument("--deadline", type=positive_deadline, default=DEFAULT_DEADLINE)
     run.add_argument("--runid")
+    run.add_argument("--runner-handoff", action="store_true", help=argparse.SUPPRESS)
     commands.add_parser("models", help="show the live model and effort catalog")
     return result
 
@@ -298,43 +325,305 @@ def resolve_pair(
     return selected["slug"], effort
 
 
-def allocate_run(root: str, requested: str | None) -> tuple[str, str]:
-    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-    runid = requested or f"{stamp}-{os.getpid()}-{secrets.token_hex(3)}"
-    if runid in (".", "..") or not TOKEN.fullmatch(runid):
+def allocate_run(root: str, requested: str | None, runner_handoff: bool) -> tuple[str, str]:
+    if requested is not None and (requested in (".", "..") or not TOKEN.fullmatch(requested)):
         raise UserError("--runid may contain only letters, digits, '.', '_', and '-'")
-    run_dir = os.path.join(root, runid)
-    try:
-        os.mkdir(run_dir, 0o700)
-    except FileExistsError as error:
-        raise UserError(f"--runid is already in use: {runid}") from error
-    return runid, run_dir
+    while True:
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        generated = (
+            f"runner-{secrets.token_hex(16)}"
+            if runner_handoff
+            else f"{stamp}-{os.getpid()}-{secrets.token_hex(3)}"
+        )
+        runid = requested or generated
+        run_dir = os.path.join(root, runid)
+        try:
+            os.mkdir(run_dir, 0o700)
+            return runid, run_dir
+        except FileExistsError as error:
+            if requested is not None:
+                raise UserError(f"--runid is already in use: {runid}") from error
 
 
 def record_pid(path: str) -> None:
-    with open(path, "x", encoding="utf-8") as output:
-        output.write(f"{os.getpid()}\n")
-        output.flush()
-        os.fsync(output.fileno())
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        payload = f"{os.getpid()}\n".encode("ascii")
+        if os.write(descriptor, payload) != len(payload):
+            raise OSError("short write while recording launcher pid")
+        os.fsync(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
-def store_prompt(args: Arguments, path: str) -> None:
-    with open(path, "xb") as output:
-        if args.prompt_stdin:
-            if sys.stdin is None:
-                raise UserError("cannot read prompt from stdin: standard input is closed")
-            try:
-                shutil.copyfileobj(sys.stdin.buffer, output)
-            except (OSError, ValueError) as error:
-                raise UserError(
-                    f"cannot read prompt from stdin: reading standard input failed: {error}"
-                ) from error
+def runner_record(name: str, value: str | int) -> None:
+    try:
+        print(f"CODEX_DELEGATE_{name}={value}", flush=True)
+    except (OSError, ValueError) as error:
+        raise UserError(f"cannot publish runner {name.lower()}: {error}") from error
+
+
+def regular_nonempty(path: str) -> bool:
+    try:
+        state = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(state.st_mode) and state.st_size > 0
+
+
+def runner_records(path: str) -> tuple[int | None, str | None, bool]:
+    pid: int | None = None
+    runid: str | None = None
+    ended = False
+    if not regular_nonempty(path):
+        return pid, runid, ended
+    try:
+        with open(path, "rb") as output:
+            for line in output:
+                pid_match = RUNNER_PID_RECORD.fullmatch(line)
+                runid_match = RUNNER_RUNID_RECORD.fullmatch(line)
+                end_match = RUNNER_END_RECORD.fullmatch(line)
+                if pid is None and pid_match is not None:
+                    pid = int(pid_match.group(1))
+                elif pid is not None and runid is None and runid_match is not None:
+                    runid = runid_match.group(1).decode("ascii")
+                elif pid is not None and end_match is not None:
+                    ended = ended or int(end_match.group(1)) == pid
+    except OSError:
+        return None, None, False
+    return pid, runid, ended
+
+
+def runner_run_dir(runid: str | None) -> str | None:
+    if runid is None:
+        return None
+    root = os.environ.get("CODEX_DELEGATE_HOME", str(Path.home() / ".codex-delegate"))
+    return os.path.join(os.path.abspath(root), runid)
+
+
+def process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, OverflowError):
+        return False
+    except PermissionError:
+        return True
+
+
+def pid_lock_released(path: str) -> bool | None:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def runner_wait(output_path: str) -> int:
+    started = time.monotonic()
+    until = started + RUNNER_WAIT_SECONDS
+    startup_until = started + RUNNER_STARTUP_SECONDS
+    while True:
+        pid, runid, ended = runner_records(output_path)
+        if runid is None:
+            if ended or (pid is not None and not process_exists(pid)):
+                print("ENDED")
+                return 0
         else:
-            source_path = readable_file(cast(str, args.prompt_file), "prompt file")
-            with open(source_path, "rb") as source:
-                shutil.copyfileobj(source, output)
-        output.flush()
-        os.fsync(output.fileno())
+            run_dir = cast(str, runner_run_dir(runid))
+            lock_released = pid_lock_released(os.path.join(run_dir, "pid"))
+            launcher_dead = pid is not None and not process_exists(pid)
+            if lock_released is not False and (ended or lock_released is True or launcher_dead):
+                print("ENDED")
+                return 0
+        now = time.monotonic()
+        if pid is None and now >= startup_until:
+            print("ENDED")
+            return 0
+        if now >= until:
+            print("RUNNING")
+            return 0
+        time.sleep(0.05)
+
+
+def write_runner_output(path: str, output: BinaryIO) -> int:
+    pid: bytes | None = None
+    pid_offset: int | None = None
+    runid_offset: int | None = None
+    end_offsets: list[int] = []
+    written = 0
+    with open(path, "rb") as source:
+        while True:
+            offset = source.tell()
+            line = source.readline()
+            if not line:
+                break
+            pid_match = RUNNER_PID_RECORD.fullmatch(line)
+            runid_match = RUNNER_RUNID_RECORD.fullmatch(line)
+            end_match = RUNNER_END_RECORD.fullmatch(line)
+            if pid is None and pid_match is not None:
+                pid = pid_match.group(1)
+                pid_offset = offset
+            elif pid is not None and runid_offset is None and runid_match is not None:
+                runid_offset = offset
+            elif pid is not None and end_match is not None and end_match.group(1) == pid:
+                end_offsets.append(offset)
+        skipped = {item for item in (pid_offset, runid_offset) if item is not None}
+        if end_offsets:
+            skipped.add(end_offsets[-1])
+        source.seek(0)
+        while True:
+            offset = source.tell()
+            line = source.readline()
+            if not line:
+                break
+            if offset not in skipped:
+                output.write(line)
+                written += len(line)
+    return written
+
+
+def runner_report(output_path: str) -> int:
+    if not regular_nonempty(output_path):
+        print(f"{PROGRAM}: the launcher produced no result in {output_path}")
+        return 0
+    pid, runid, ended = runner_records(output_path)
+    run_dir = runner_run_dir(runid)
+    lock_released = pid_lock_released(os.path.join(run_dir, "pid")) if run_dir is not None else None
+    if lock_released is False:
+        raise UserError("runner-report cannot return output while the launcher is still running")
+    if not ended and runid is None and pid is not None and process_exists(pid):
+        raise UserError("runner-report cannot return output while the launcher is still starting")
+    if sys.stdout is None:
+        return 0
+    try:
+        written = write_runner_output(output_path, sys.stdout.buffer)
+        sys.stdout.buffer.flush()
+    except (OSError, ValueError):
+        print(f"{PROGRAM}: the launcher produced no readable result in {output_path}")
+        return 0
+    if written == 0:
+        location = run_dir or "the unresolved runner launch"
+        print(f"{PROGRAM}: the launcher ended before it could report; no result for {location}")
+    elif (run_dir is None and not ended) or (
+        run_dir is not None and not regular_nonempty(os.path.join(run_dir, "status.json"))
+    ):
+        location = run_dir or "the unresolved runner launch"
+        print(
+            f"{PROGRAM}: the launcher ended before it could report terminal status; "
+            f"preceding output may be incomplete for {location}"
+        )
+    return 0
+
+
+def check_prompt_state(notice: SignalNotice, deadline_at: float) -> None:
+    if notice["number"] is not None:
+        raise PromptStopped(notice["number"])
+    if time.monotonic() >= deadline_at:
+        raise PromptDeadline
+
+
+def copy_prompt(
+    source: BinaryIO,
+    output: BinaryIO,
+    read_error: str,
+    notice: SignalNotice,
+    deadline_at: float,
+) -> None:
+    try:
+        descriptor = source.fileno()
+        regular = stat.S_ISREG(os.fstat(descriptor).st_mode)
+    except (OSError, ValueError) as error:
+        raise UserError(f"{read_error}: {error}") from error
+    watcher: selectors.BaseSelector | None = None
+    if not regular:
+        watcher = selectors.SelectSelector()
+        try:
+            watcher.register(descriptor, selectors.EVENT_READ)
+        except (OSError, ValueError) as error:
+            watcher.close()
+            raise UserError(f"{read_error}: {error}") from error
+    try:
+        while True:
+            check_prompt_state(notice, deadline_at)
+            if watcher is not None and not watcher.select(
+                min(0.1, max(0.0, deadline_at - time.monotonic()))
+            ):
+                continue
+            check_prompt_state(notice, deadline_at)
+            try:
+                chunk = os.read(descriptor, 65536)
+            except (OSError, ValueError) as error:
+                raise UserError(f"{read_error}: {error}") from error
+            if not chunk:
+                return
+            try:
+                written = output.write(chunk)
+            except OSError as error:
+                raise UserError(f"cannot store prompt: {error}") from error
+            if written != len(chunk):
+                raise UserError("cannot store prompt: short write")
+    finally:
+        if watcher is not None:
+            watcher.close()
+
+
+def store_prompt(args: Arguments, path: str, notice: SignalNotice, deadline_at: float) -> None:
+    try:
+        with open(path, "xb", buffering=0) as output:
+            if args.prompt_stdin:
+                if sys.stdin is None or sys.stdin.closed:
+                    raise UserError("cannot read prompt from stdin: standard input is closed")
+                try:
+                    os.fstat(sys.stdin.buffer.fileno())
+                except OSError as error:
+                    if error.errno == errno.EBADF:
+                        raise UserError(
+                            "cannot read prompt from stdin: standard input is closed"
+                        ) from error
+                    raise
+                copy_prompt(
+                    sys.stdin.buffer,
+                    output,
+                    "cannot read prompt from stdin: reading standard input failed",
+                    notice,
+                    deadline_at,
+                )
+            else:
+                try:
+                    source_path = readable_file(cast(str, args.prompt_file), "prompt file")
+                except UserError as error:
+                    raise PromptSourceError(str(error)) from error
+                with open(source_path, "rb") as source:
+                    copy_prompt(
+                        source,
+                        output,
+                        "cannot read prompt file",
+                        notice,
+                        deadline_at,
+                    )
+            try:
+                os.fsync(output.fileno())
+            except OSError as error:
+                raise UserError(f"cannot store prompt: {error}") from error
+    except UserError:
+        raise
+    except OSError as error:
+        raise UserError(f"cannot store prompt: {error}") from error
     if os.path.getsize(path) == 0:
         raise UserError("the prompt is empty")
 
@@ -394,6 +683,7 @@ class Capture:
         self.bytes_written = 0
         self.buffer = b""
         self.drop_line = False
+        self.write_failed = False
         self.error: str | None = None
         self.terminal: str | None = None
         self.terminal_at: float | None = None
@@ -438,10 +728,18 @@ class Capture:
 
     def feed(self, chunk: bytes) -> None:
         remaining = EVENT_LIMIT - self.bytes_written
-        if remaining > 0:
+        if remaining > 0 and not self.write_failed:
             stored = chunk[:remaining]
-            self.output.write(stored)
-            self.bytes_written += len(stored)
+            try:
+                written = self.output.write(stored)
+            except OSError:
+                self.write_failed = True
+                self.mark_error("event_stream_write_failed")
+            else:
+                self.bytes_written += written
+                if written != len(stored):
+                    self.write_failed = True
+                    self.mark_error("event_stream_write_failed")
         if len(chunk) > max(remaining, 0):
             self.mark_error("event_stream_too_large")
         data = chunk
@@ -463,8 +761,13 @@ class Capture:
     def finish(self) -> None:
         if self.buffer or self.drop_line:
             self.mark_error("truncated_event_record")
-        self.output.flush()
-        os.fsync(self.output.fileno())
+        if not self.write_failed:
+            try:
+                self.output.flush()
+                os.fsync(self.output.fileno())
+            except OSError:
+                self.write_failed = True
+                self.mark_error("event_stream_write_failed")
 
 
 def group_exists(pgid: int) -> bool:
@@ -473,29 +776,30 @@ def group_exists(pgid: int) -> bool:
         return True
     except ProcessLookupError:
         return False
-    except PermissionError:
+    except OSError:
         return True
 
 
 def signal_group(pgid: int, number: int) -> None:
     try:
         os.killpg(pgid, number)
-    except ProcessLookupError:
+    except OSError:
         pass
 
 
 def read_pipe(fd: int, capture: Capture) -> bool:
-    eof = False
-    while True:
+    for _ in range(READ_BATCH):
         try:
             chunk = os.read(fd, 65536)
         except BlockingIOError:
             break
-        if not chunk:
-            eof = True
+        except OSError:
+            capture.mark_error("event_stream_read_failed")
             break
+        if not chunk:
+            return True
         capture.feed(chunk)
-    return eof
+    return False
 
 
 def stop_group(process: subprocess.Popen[bytes], fd: int, capture: Capture) -> bool:
@@ -528,7 +832,10 @@ def atomic_status(path: str, status: Status) -> None:
 
 
 def has_final_message(path: str) -> bool:
-    return os.path.isfile(path) and os.path.getsize(path) > 0
+    try:
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+    except OSError:
+        return False
 
 
 def discard_stdout_error() -> None:
@@ -609,8 +916,10 @@ def run(args: Arguments, codex: str, models: list[Model]) -> int:
         for writable in (cwd, *add_dirs):
             if paths_overlap(root, writable):
                 raise UserError(f"run storage {root} overlaps writable root {writable}")
-    runid, run_dir = allocate_run(root, args.runid)
+    runid, run_dir = allocate_run(root, args.runid, args.runner_handoff)
     record_pid(os.path.join(run_dir, "pid"))
+    if args.runner_handoff:
+        runner_record("RUNID", runid)
     prompt_path = os.path.join(run_dir, "prompt.txt")
     final_path = os.path.join(run_dir, "final.txt")
     events_path = os.path.join(run_dir, "events.jsonl")
@@ -626,9 +935,6 @@ def run(args: Arguments, codex: str, models: list[Model]) -> int:
         "events_path": events_path,
         "stderr_path": stderr_path,
     }
-    store_prompt(args, prompt_path)
-    command = codex_argv(codex, args, model, effort, final_path, cwd, add_dirs, schema)
-
     notice: SignalNotice = {"number": None, "at": None}
 
     def stopped(number: int, _frame: FrameType | None) -> None:
@@ -641,9 +947,73 @@ def run(args: Arguments, codex: str, models: list[Model]) -> int:
 
     started_mono = time.monotonic()
     deadline_at = started_mono + args.deadline
+    try:
+        store_prompt(args, prompt_path, notice, deadline_at)
+        check_prompt_state(notice, deadline_at)
+    except PromptStopped as error:
+        staging_signal_name = signal.Signals(error.number).name
+        status = status_for(
+            context,
+            "STOPPED",
+            128 + error.number,
+            f"received {staging_signal_name} during prompt ingestion",
+            staging_signal_name,
+            time.monotonic() - started_mono,
+            None,
+            None,
+        )
+        atomic_status(status_path, status)
+        print_result(final_path, status)
+        return 128 + error.number
+    except PromptDeadline:
+        status = status_for(
+            context,
+            "DEADLINE",
+            EXIT["DEADLINE"],
+            f"wall-clock deadline of {args.deadline}s expired during prompt ingestion",
+            None,
+            time.monotonic() - started_mono,
+            None,
+            None,
+        )
+        atomic_status(status_path, status)
+        print_result(final_path, status)
+        return EXIT["DEADLINE"]
+    except PromptSourceError as error:
+        print(f"{PROGRAM}: {error}", file=sys.stderr)
+        status = status_for(
+            context,
+            "LAUNCH_ERROR",
+            2,
+            str(error),
+            None,
+            time.monotonic() - started_mono,
+            None,
+            None,
+        )
+        atomic_status(status_path, status)
+        print_result(final_path, status)
+        return 2
+    except UserError as error:
+        print(f"{PROGRAM}: {error}", file=sys.stderr)
+        status = status_for(
+            context,
+            "LAUNCH_ERROR",
+            EXIT["LAUNCH_ERROR"],
+            str(error),
+            None,
+            time.monotonic() - started_mono,
+            None,
+            None,
+        )
+        atomic_status(status_path, status)
+        print_result(final_path, status)
+        return EXIT["LAUNCH_ERROR"]
+
+    command = codex_argv(codex, args, model, effort, final_path, cwd, add_dirs, schema)
     with (
         open(prompt_path, "rb") as prompt,
-        open(events_path, "xb") as events,
+        open(events_path, "xb", buffering=0) as events,
         open(stderr_path, "xb") as stderr,
     ):
         capture = Capture(events)
@@ -675,48 +1045,76 @@ def run(args: Arguments, codex: str, models: list[Model]) -> int:
             return EXIT["LAUNCH_ERROR"]
 
         fd = cast(BinaryIO, process.stdout).fileno()
-        os.set_blocking(fd, False)
-        watcher = selectors.DefaultSelector()
-        watcher.register(fd, selectors.EVENT_READ)
-        eof = False
-        outcome: str | None = None
-        while outcome is None:
-            now = time.monotonic()
-            timeout = min(0.1, max(0.0, deadline_at - now))
-            if watcher.select(timeout):
-                eof = read_pipe(fd, capture) or eof
-            process_code = process.poll()
-            now = time.monotonic()
-            candidates: list[tuple[float, str]] = []
-            if capture.terminal_at is not None:
-                candidates.append((capture.terminal_at, "terminal"))
-            if notice["at"] is not None:
-                candidates.append((notice["at"], "signal"))
-            if now >= deadline_at:
-                candidates.append((deadline_at, "deadline"))
-            if process_code is not None and eof:
-                candidates.append((now, "exit"))
-            if candidates:
-                outcome = min(candidates, key=lambda item: item[0])[1]
-
-        if outcome == "terminal":
-            natural_until = time.monotonic() + 0.5
-            while process.poll() is None and time.monotonic() < natural_until:
-                if watcher.select(0.05):
-                    eof = read_pipe(fd, capture) or eof
-        clean = stop_group(process, fd, capture)
+        watcher: selectors.BaseSelector | None = None
+        process_code: int | None = None
+        outcome = "stream_error"
+        clean = False
         try:
-            process_code = process.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            process_code = None
-            clean = False
-        read_pipe(fd, capture)
-        capture.finish()
-        watcher.close()
+            os.set_blocking(fd, False)
+            watcher = selectors.DefaultSelector()
+            watcher.register(fd, selectors.EVENT_READ)
+            eof = False
+            waiting = True
+            while waiting:
+                now = time.monotonic()
+                timeout = min(0.1, max(0.0, deadline_at - now))
+                if watcher.select(timeout):
+                    eof = read_pipe(fd, capture) or eof
+                process_code = process.poll()
+                now = time.monotonic()
+                candidates: list[tuple[float, str]] = []
+                if capture.terminal_at is not None:
+                    candidates.append((capture.terminal_at, "terminal"))
+                if notice["at"] is not None:
+                    candidates.append((notice["at"], "signal"))
+                if now >= deadline_at:
+                    candidates.append((deadline_at, "deadline"))
+                if process_code is not None and eof:
+                    candidates.append((now, "exit"))
+                if candidates:
+                    outcome = min(candidates, key=lambda item: item[0])[1]
+                    waiting = False
+
+            if outcome == "terminal":
+                settled_at = time.monotonic()
+                settle_limit = settled_at + TERMINAL_SETTLE_LIMIT_SECONDS
+                activity_until = settle_limit
+                while process.poll() is None:
+                    now = time.monotonic()
+                    settle_until = min(activity_until, settle_limit)
+                    if now >= settle_until:
+                        break
+                    before = capture.bytes_written
+                    if watcher.select(min(0.05, settle_until - now)):
+                        read_pipe(fd, capture)
+                    if capture.bytes_written != before:
+                        activity_until = min(
+                            time.monotonic() + TERMINAL_SETTLE_IDLE_SECONDS,
+                            settle_limit,
+                        )
+        except OSError:
+            capture.mark_error("event_stream_read_failed")
+        finally:
+            clean = stop_group(process, fd, capture)
+            try:
+                process_code = process.wait(timeout=1)
+            except (OSError, subprocess.TimeoutExpired):
+                process_code = None
+                clean = False
+            read_pipe(fd, capture)
+            capture.finish()
+            if watcher is not None:
+                try:
+                    watcher.close()
+                except OSError:
+                    capture.mark_error("event_stream_read_failed")
 
     if capture.message and not has_final_message(final_path):
-        with open(final_path, "w", encoding="utf-8") as final:
-            final.write(capture.message)
+        try:
+            with open(final_path, "w", encoding="utf-8") as final:
+                final.write(capture.message)
+        except (OSError, UnicodeError):
+            capture.mark_error("final_message_write_failed")
 
     signal_number = notice["number"]
     signal_name = (
@@ -778,7 +1176,17 @@ def main() -> int:
             file=sys.stderr,
         )
         return EXIT["PLATFORM_UNSUPPORTED"]
+    if sys.argv[1:2] == ["runner-wait"]:
+        if len(sys.argv) != 3:
+            raise UserError("runner-wait requires exactly one harness output file")
+        return runner_wait(sys.argv[2])
+    if sys.argv[1:2] == ["runner-report"]:
+        if len(sys.argv) != 3:
+            raise UserError("runner-report requires exactly one harness output file")
+        return runner_report(sys.argv[2])
     args = cast(Arguments, parser().parse_args())
+    if args.command == "run" and args.runner_handoff and args.runid is not None:
+        raise UserError("--runner-handoff cannot be combined with --runid")
     codex = shutil.which("codex")
     if codex is None:
         raise UserError("codex is not on PATH")
@@ -791,7 +1199,21 @@ def main() -> int:
     return run(args, codex, models)
 
 
-try:
-    raise SystemExit(main())
-except UserError as error:
-    raise SystemExit(fail(str(error)))
+def entrypoint() -> int:
+    runner_mode = sys.argv[1:2] == ["run"] and "--runner-handoff" in sys.argv[2:]
+    if runner_mode:
+        runner_record("LAUNCHER_PID", os.getpid())
+    try:
+        try:
+            return main()
+        except UserError as error:
+            return fail(str(error))
+    finally:
+        if runner_mode:
+            try:
+                runner_record("LAUNCHER_ENDED", os.getpid())
+            except UserError:
+                pass
+
+
+raise SystemExit(entrypoint())

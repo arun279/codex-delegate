@@ -52,6 +52,8 @@ workflow_inline_ "agent('',{agentType:'codex-delegate:runner',label:'codex:test'
 check 'workflow_denies_' "empty runner prompt is denied"
 workflow_inline_ "agent(undefined,{agentType:'codex-delegate:runner',label:'codex:test'})"
 check 'workflow_denies_' "missing runner prompt is denied"
+workflow_inline_ "agent('not an envelope',{agentType:'codex-delegate:runner',label:'codex:test'})"
+check 'workflow_allows_' "dynamic envelope semantics are not claimed as hook enforcement"
 workflow_inline_ "agent('work',{agentType:'codex-delegate:runner',label:'codex:test',model:'sonnet',effort:'high'})"
 check 'workflow_denies_' "call-site wrapper model and effort are denied"
 workflow_inline_ "agent('',{agentType:'another:runner',label:'other:test'})"
@@ -71,7 +73,9 @@ check 'grep -q "===ARGS===" "$RUNNER" && grep -q "===PROMPT===" "$RUNNER" &&
        grep -q "non-empty" "$RUNNER" && grep -q "1 through 12,960" "$RUNNER" &&
        grep -q -- "no .--runid." "$RUNNER"' \
   "runner validates its complete envelope before Bash"
-check '[ "$(grep -c "^codex-delegate run" "$RUNNER")" = 1 ] &&
+check '[ "$(grep -c "^codex-delegate run " "$RUNNER")" = 1 ] &&
+       [ "$(grep -c "^codex-delegate runner-wait" "$RUNNER")" = 1 ] &&
+       [ "$(grep -c "^codex-delegate runner-report" "$RUNNER")" = 1 ] &&
        ! grep -q "codex-delegate start\|codex-delegate wait\|codex-delegate status\|codex-delegate reap" "$RUNNER"' \
   "runner has exactly one launcher operation"
 check 'grep -q "Environment variables do not override" "$SKILL" &&
@@ -88,6 +92,27 @@ check '! grep -Eq "metadata_tampered|observed_pid_birth_ledger|survivors|termina
   "retired status and attribution fields are absent"
 check 'grep -q "exactly 16 fields" "$README" && grep -q "exactly 16 fields" "$STATUS_REF"' \
   "README and status reference agree on schema size"
+check 'GIT_DOCS_OK=1
+       for doc in "$README" "$SECURITY" "$SKILL" "$STATUS_REF"; do
+         grep -q -- "--add-dir" "$doc" && grep -q "Git metadata" "$doc" &&
+           grep -q "opt in" "$doc" || GIT_DOCS_OK=0
+       done
+       [ "$GIT_DOCS_OK" = 1 ] &&
+       GIT_COMMON_OK=1
+       for doc in "$README" "$SECURITY" "$SKILL" "$STATUS_REF"; do
+         grep -Fq "git rev-parse --path-format=absolute --git-common-dir" "$doc" ||
+           GIT_COMMON_OK=0
+       done
+       [ "$GIT_COMMON_OK" = 1 ] &&
+       grep -q "linked worktree" "$README" && grep -q "linked worktree" "$SKILL" &&
+       grep -q "do not compose" "$README" && grep -q "do not compose" "$SKILL" &&
+       ! grep -Fq "cannot stage or commit" "$README" &&
+       ! grep -Fq "does not include Git metadata" "$SECURITY" &&
+       ! grep -Fq "cannot stage, commit, branch, or stash" "$SKILL"' \
+  "workspace-write names Git's common directory for the narrow opt-in"
+check 'grep -Fq "Initial \`--prompt-file\` path validation exits 2." "$README" &&
+       grep -Fq "Empty prompt input, stdin read failures, prompt storage failures, and Codex launch errors are \`LAUNCH_ERROR\` (12)." "$README"' \
+  "README predicts every prompt-source failure class"
 check 'grep -q "resolves once" "$README" && grep -q "resolves once" "$SKILL"' \
   "both entry points still tell a Workflow author the call resolves once"
 check 'grep -q "different process group or session" "$README" &&
