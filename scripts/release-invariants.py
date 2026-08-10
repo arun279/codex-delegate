@@ -58,6 +58,13 @@ CHANGELOG_EVIDENCE = re.compile(
     r"^  <!-- evidence: (?P<path>[A-Za-z0-9_./-]+) :: (?P<needle>.+) -->$"
 )
 CHANGELOG_SECTIONS = {"Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"}
+CHANGELOG_PRODUCT_SURFACE = (
+    "bin/",
+    "hooks/",
+    ".claude-plugin/marketplace.json",
+    ".claude-plugin/plugin.json",
+    "package.json",
+)
 TYPOGRAPHIC_DASH = re.compile(r"[\u2010-\u2015]")
 PUBLICATION_COPY_EXCLUSIONS = {
     "scripts/release-invariants.py",  # This rule names the characters it rejects.
@@ -453,6 +460,101 @@ def changelog_check() -> int:
             continue
         if needle not in source_text:
             problems.append(f"CHANGELOG.md:{line_number} claims {needle!r}, absent from {relative}")
+
+    git = shutil.which("git")
+    base = os.environ.get("CHANGELOG_BASE")
+    skip_diff_reason: str | None = None
+    if git is None:
+        skip_diff_reason = "git is not installed"
+    elif base is None:
+        head_result = subprocess.run(  # noqa: S603 -- git is resolved from PATH above.
+            [git, "rev-parse", "--verify", "--quiet", "HEAD"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if head_result.returncode != 0:
+            skip_diff_reason = "no comparable Git base"
+        else:
+            head = head_result.stdout.strip()
+            for candidate in ("refs/remotes/origin/main", "refs/heads/main"):
+                exists = subprocess.run(  # noqa: S603 -- git is resolved from PATH above.
+                    [git, "rev-parse", "--verify", "--quiet", candidate],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if exists.returncode != 0:
+                    continue
+                merge_base_result = subprocess.run(  # noqa: S603 -- resolved above.
+                    [git, "merge-base", head, candidate],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if merge_base_result.returncode != 0:
+                    continue
+                merge_base = merge_base_result.stdout.strip()
+                if merge_base != head:
+                    base = merge_base
+                    break
+            if base is None:
+                parent = subprocess.run(  # noqa: S603 -- git is resolved from PATH above.
+                    [git, "rev-parse", "--verify", "--quiet", f"{head}^"],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if parent.returncode == 0:
+                    base = parent.stdout.strip()
+                else:
+                    skip_diff_reason = "no comparable Git base"
+
+    if skip_diff_reason is not None:
+        print(f"changelog: product-diff coverage SKIP ({skip_diff_reason})")
+    elif base is not None and git is not None:
+        try:
+            changed = subprocess.run(  # noqa: S603 -- git is resolved from PATH above.
+                [git, "diff", "--name-only", base, "--"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.splitlines()
+            product_changed = any(
+                relative == surface or relative.startswith(surface)
+                for relative in changed
+                for surface in CHANGELOG_PRODUCT_SURFACE
+            )
+            if product_changed:
+                prior = subprocess.run(  # noqa: S603 -- git is resolved from PATH above.
+                    [git, "show", f"{base}:CHANGELOG.md"],
+                    cwd=ROOT,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.splitlines()
+                prior_entries = {
+                    (line, prior[index + 1] if index + 1 < len(prior) else "")
+                    for index, line in enumerate(prior)
+                    if CHANGELOG_ENTRY.match(line) is not None
+                }
+                current_entries = {
+                    (line, lines[index + 1] if index + 1 < len(lines) else "")
+                    for index, line in enumerate(lines)
+                    if CHANGELOG_ENTRY.match(line) is not None
+                }
+                if not current_entries - prior_entries:
+                    problems.append(
+                        f"product surface changed without a new CHANGELOG.md entry (base {base})"
+                    )
+        except subprocess.CalledProcessError as error:
+            detail = error.stderr.strip() if isinstance(error.stderr, str) else ""
+            problems.append(f"cannot inspect the product diff from {base!r}: {detail or error}")
 
     for problem in problems:
         print(f"FAIL {problem}")

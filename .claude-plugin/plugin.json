@@ -2,7 +2,7 @@
   "name": "codex-delegate",
   "displayName": "Codex Delegate",
   "version": "0.1.2",
-  "description": "Delegate one bounded coding task from Claude Code to the Codex CLI. The Claude Code plugin installs PreToolUse hooks that read every Bash, Monitor, and Workflow call's text; its PermissionRequest hook is inert. The npm package ships only the standalone launcher and project documents. The launcher runs bounded teardown of the Codex process group and reports CLEANUP_FAILED if the group survives. Prompts and files Codex reads are sent to OpenAI using your ChatGPT Codex allowance or API-billed usage. Requires macOS, /usr/bin/env with -S support, a python3 on PATH that starts with -I -S, and an installed, signed-in Codex CLI.",
+  "description": "Codex CLI delegation. PreToolUse hooks read every Bash, Monitor, and Workflow call; PermissionRequest hook is inert. Prompts and files are sent to OpenAI. Uses your ChatGPT Codex allowance or API-billed usage. Bounded cleanup reports CLEANUP_FAILED. Requires macOS and a signed-in Codex CLI.",
   "author": {
     "name": "Arun Krishnamurthy",
     "url": "https://github.com/arun279"

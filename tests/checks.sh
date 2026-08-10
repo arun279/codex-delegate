@@ -42,14 +42,20 @@ run_case() {
   CASE_RC=$?
 }
 
-expect_diagnostic() { # expected-exit fixed-diagnostic label command...
+expect_diagnostic() { # expected-exit newline-separated-fixed-diagnostics label command...
   local expected_rc=$1 diagnostic=$2 label=$3
+  local missing=
   shift 3
   run_case "$@"
-  if [ "$CASE_RC" -eq "$expected_rc" ] && grep -Fq "$diagnostic" "$CASE_OUT"; then
+  while IFS= read -r required; do
+    if ! grep -Fq "$required" "$CASE_OUT"; then
+      missing="${missing}${missing:+; }$required"
+    fi
+  done <<<"$diagnostic"
+  if [ "$CASE_RC" -eq "$expected_rc" ] && [ -z "$missing" ]; then
     ok "$label"
   else
-    bad "$label (exit $CASE_RC, expected $expected_rc; missing: $diagnostic)" "$CASE_OUT"
+    bad "$label (exit $CASE_RC, expected $expected_rc; missing: $missing)" "$CASE_OUT"
   fi
 }
 
@@ -89,6 +95,10 @@ decoded_streaming_check() {
 
 mutate_json() {
   python3 -c 'import json,sys; from functools import reduce; p,keys,raw=sys.argv[1],sys.argv[2].split("."),sys.argv[3]; value=json.load(open(p)); parent=reduce(lambda current,key: current[int(key)] if isinstance(current,list) else current[key],keys[:-1],value); last=keys[-1]; parent[last if isinstance(parent,dict) else int(last)]=json.loads(raw); json.dump(value,open(p,"w"))' "$@"
+}
+
+remove_json_phrase() { # file dotted-key phrase
+  python3 -c 'import json,sys; from functools import reduce; p,keys,phrase=sys.argv[1],sys.argv[2].split("."),sys.argv[3]; value=json.load(open(p)); parent=reduce(lambda current,key: current[int(key)] if isinstance(current,list) else current[key],keys[:-1],value); last=keys[-1]; index=last if isinstance(parent,dict) else int(last); parent[index]=parent[index].replace(phrase,""); json.dump(value,open(p,"w"))' "$@"
 }
 
 isolation_mutation_check() {
@@ -170,7 +180,7 @@ BROKEN_PLUGIN_ROOT=$WORK/broken-plugin
 mkdir -p "$BROKEN_PLUGIN_ROOT/bin"
 printf '%s\n' '#!/bin/sh' 'exit 42' >"$BROKEN_PLUGIN_ROOT/bin/codex-delegate"
 chmod 700 "$BROKEN_PLUGIN_ROOT/bin/codex-delegate"
-expect_diagnostic 0 "Unsafe codex-delegate PATH mismatch" \
+expect_diagnostic 0 $'Unsafe codex-delegate PATH mismatch\nIf you intend to use the separate copy instead, disable this plugin.' \
   "a different codex-delegate earlier on PATH produces a preflight diagnostic" \
   env PATH="$BROKEN_PLUGIN_ROOT/bin:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
   CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
@@ -316,6 +326,84 @@ mutate_json "$RELEASE_ROOT/.claude-plugin/marketplace.json" owner.name '"Owner\u
 expect_diagnostic 1 "owner.name holds hidden character U+0001" \
   "marketplace owner.name rejects hidden control characters" \
   python3 "$RELEASE_ROOT/scripts/release-invariants.py" manifests
+
+CLAIM_ROOT=$WORK/claim-fixture
+mkdir -p "$CLAIM_ROOT"/{agents,bin,commands,hooks,scripts} \
+  "$CLAIM_ROOT/.claude-plugin" "$CLAIM_ROOT/skills/routing/reference"
+cp "$ROOT/agents/runner.md" "$CLAIM_ROOT/agents/runner.md"
+cp "$ROOT/bin/codex-delegate" "$CLAIM_ROOT/bin/codex-delegate"
+cp "$ROOT/commands/uninstall.md" "$CLAIM_ROOT/commands/uninstall.md"
+cp "$ROOT/hooks/guard-bash.py" "$ROOT/hooks/hooks.json" "$CLAIM_ROOT/hooks/"
+cp "$ROOT/scripts/claim-check.py" "$CLAIM_ROOT/scripts/claim-check.py"
+cp "$ROOT/skills/routing/SKILL.md" "$CLAIM_ROOT/skills/routing/SKILL.md"
+cp "$ROOT/skills/routing/reference/prompting.md" \
+  "$ROOT/skills/routing/reference/status-and-trust.md" \
+  "$CLAIM_ROOT/skills/routing/reference/"
+cp "$ROOT/README.md" "$ROOT/PRIVACY.md" "$ROOT/SECURITY.md" "$CLAIM_ROOT/"
+for manifest in package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+  cp "$ROOT/$manifest" "$CLAIM_ROOT/$manifest"
+done
+
+for manifest_key in \
+  'package.json description' \
+  '.claude-plugin/plugin.json description' \
+  '.claude-plugin/marketplace.json plugins.0.description'; do
+  set -- $manifest_key
+  cp "$ROOT/$1" "$CLAIM_ROOT/$1"
+  remove_json_phrase "$CLAIM_ROOT/$1" "$2" 'Prompts and files are sent to OpenAI. '
+  expect_diagnostic 1 "description omits the OpenAI data-egress disclosure" \
+    "$1 pins the OpenAI data-egress disclosure" \
+    python3 "$CLAIM_ROOT/scripts/claim-check.py"
+done
+
+CHANGELOG_ROOT=$WORK/changelog-fixture
+mkdir -p "$CHANGELOG_ROOT/scripts" "$CHANGELOG_ROOT/bin"
+cp "$ROOT/scripts/release-invariants.py" "$CHANGELOG_ROOT/scripts/release-invariants.py"
+printf '%s\n' '# Changelog' '' '## [Unreleased]' '' '### Changed' '' \
+  >"$CHANGELOG_ROOT/CHANGELOG.md"
+printf '%s\n' 'retention behavior baseline' >"$CHANGELOG_ROOT/bin/codex-delegate"
+git -C "$CHANGELOG_ROOT" init --quiet
+git -C "$CHANGELOG_ROOT" config user.email checks@example.invalid
+git -C "$CHANGELOG_ROOT" config user.name checks
+git -C "$CHANGELOG_ROOT" add CHANGELOG.md bin/codex-delegate
+git -C "$CHANGELOG_ROOT" commit --quiet -m baseline
+printf '%s\n' 'retention behavior changed safely' >>"$CHANGELOG_ROOT/bin/codex-delegate"
+expect_diagnostic 1 "product surface changed without a new CHANGELOG.md entry" \
+  "a product-surface diff without a changelog entry is rejected" \
+  env CHANGELOG_BASE=HEAD python3 "$CHANGELOG_ROOT/scripts/release-invariants.py" changelog
+printf '%s\n' \
+  '- Changed retention behavior safely.' \
+  '  <!-- evidence: bin/codex-delegate :: retention behavior changed safely -->' \
+  >>"$CHANGELOG_ROOT/CHANGELOG.md"
+expect_diagnostic 0 "changelog: PASS (1 verified entries)" \
+  "a product-surface diff with an evidenced changelog entry is accepted" \
+  env CHANGELOG_BASE=HEAD python3 "$CHANGELOG_ROOT/scripts/release-invariants.py" changelog
+
+NO_GIT_CHANGELOG_ROOT=$WORK/changelog-no-git
+mkdir -p "$NO_GIT_CHANGELOG_ROOT/scripts" "$NO_GIT_CHANGELOG_ROOT/bin"
+cp "$ROOT/scripts/release-invariants.py" \
+  "$NO_GIT_CHANGELOG_ROOT/scripts/release-invariants.py"
+printf '%s\n' '# Changelog' '' '## [Unreleased]' '' '### Changed' '' \
+  '- Changed retention behavior safely.' \
+  '  <!-- evidence: bin/codex-delegate :: retention behavior changed safely -->' \
+  >"$NO_GIT_CHANGELOG_ROOT/CHANGELOG.md"
+printf '%s\n' 'retention behavior changed safely' \
+  >"$NO_GIT_CHANGELOG_ROOT/bin/codex-delegate"
+expect_diagnostic 0 "product-diff coverage SKIP (no comparable Git base)" \
+  "a source tree without Git metadata skips product-diff coverage" \
+  env GIT_CEILING_DIRECTORIES="$WORK" \
+  python3 "$NO_GIT_CHANGELOG_ROOT/scripts/release-invariants.py" changelog
+
+ROOT_COMMIT_CHANGELOG_ROOT=$WORK/changelog-root-commit
+cp -R "$NO_GIT_CHANGELOG_ROOT" "$ROOT_COMMIT_CHANGELOG_ROOT"
+git -C "$ROOT_COMMIT_CHANGELOG_ROOT" init --quiet --initial-branch=feature
+git -C "$ROOT_COMMIT_CHANGELOG_ROOT" config user.email checks@example.invalid
+git -C "$ROOT_COMMIT_CHANGELOG_ROOT" config user.name checks
+git -C "$ROOT_COMMIT_CHANGELOG_ROOT" add .
+git -C "$ROOT_COMMIT_CHANGELOG_ROOT" commit --quiet -m only
+expect_diagnostic 0 "product-diff coverage SKIP (no comparable Git base)" \
+  "a root commit without a comparison target skips product-diff coverage" \
+  python3 "$ROOT_COMMIT_CHANGELOG_ROOT/scripts/release-invariants.py" changelog
 
 printf '\n== frontmatter completeness\n'
 MODEL_ROOT=$WORK/model-fixture
