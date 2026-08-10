@@ -62,7 +62,7 @@ else
     # environment and would precede the later Bash-tool injection, so delegated runs would use it.
     found=$(command -v codex-delegate 2>/dev/null)
     if [ -n "$found" ] && [ "$(physical "$found")" != "$(physical "$shipped")" ]; then
-      add "Unsafe codex-delegate PATH mismatch. PATH resolves the bare name to $(esc "$found"), but this plugin ships $(esc "$shipped"). Delegated runs would invoke the other copy. Remove or rename it, or ensure the shipped plugin bin directory comes first on the Bash tool's PATH."
+      add "Unsafe codex-delegate PATH mismatch. PATH resolves the bare name to $(esc "$found"), but this plugin ships $(esc "$shipped"). Delegated runs would invoke the other copy. To use this plugin, uninstall that separate copy or put this plugin's bin directory first on the Bash tool's PATH. If you intend to use the separate copy instead, disable this plugin."
     fi
   fi
 fi

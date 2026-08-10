@@ -227,6 +227,22 @@ def check_protocol(launcher: str, wait: str, report: str, work: Path) -> list[st
             "a complete result without the end record became a contradictory no-result report"
         )
 
+    missing_runid = "runner-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    missing_no_end_output = work / "missing-without-end.out"
+    missing_no_end_output.write_text(
+        f"CODEX_DELEGATE_LAUNCHER_PID=1\nCODEX_DELEGATE_RUNID={missing_runid}\n"
+        "truncated launcher output\n"
+    )
+    missing_no_end_report = bash(
+        fill(report, "report", {"<OUTPUT_FILE>": str(missing_no_end_output)}), env
+    )
+    if (
+        missing_no_end_report.returncode != 0
+        or "truncated launcher output" not in missing_no_end_report.stdout
+        or "preceding output may be incomplete" not in missing_no_end_report.stdout
+    ):
+        problems.append("a missing run directory hid an absent launcher end record")
+
     second_output = work / "second.out"
     if launch(launcher_script, second_output, env) != 0 or records(second_output)[1] == runid:
         problems.append("two runner launches did not receive distinct launcher-minted IDs")
