@@ -14,7 +14,6 @@ HOOKS=$ROOT/hooks/hooks.json
 PREFLIGHT=$ROOT/hooks/preflight.sh
 GATE=$ROOT/scripts/gate.sh
 PLUGIN_LIFECYCLE=$ROOT/tests/plugin-lifecycle.sh
-LEFTHOOK=$ROOT/lefthook.yml
 CI=$ROOT/.github/workflows/ci.yml
 . "$ROOT/scripts/test-temp.sh"
 test_temp_create "$ROOT" contract || exit 2
@@ -160,10 +159,18 @@ check 'grep -q "run_step .*contract suite.*tests/contract.sh" "$GATE" &&
        grep -q "run_step .*corpus replay" "$GATE" && grep -q "run_step .*determinism" "$GATE" &&
        grep -q "run_step .*npm package contents.*scripts/npm-pack-check.py" "$GATE"' \
   "release gate retains every required suite, corpus, and determinism check"
-check 'grep -q "run: bash scripts/gate.sh" "$LEFTHOOK"' \
-  "lefthook reaches the release gate"
-check '! grep -Eq '"'"'^[[:space:]]*glob(_matcher)?:'"'"' "$LEFTHOOK"' \
-  "lefthook pre-commit commands do not depend on unverified glob semantics"
+check 'gate_analysis=true
+       # The gate is the only place these run. Losing one silently removes a whole
+       # class of check while every suite stays green, which was measured.
+       for step in "ruff check" "ruff format" "ruff security" "mypy strict" \
+         "Python dead code" "POSIX preflight shellcheck" "Bash shellcheck" \
+         "shell format" "shell syntax" "Markdown lint" "document format" \
+         "GitHub workflow lint" "secret scan" "frontmatter lint" \
+         "documentation claim check"; do
+         grep -Fq "run_step \"$step\"" "$GATE" || gate_analysis=false
+       done
+       $gate_analysis' \
+  "release gate retains every static-analysis step"
 check 'grep -q "runs-on: macos-latest" "$CI" && grep -q "run: bash scripts/gate.sh" "$CI"' \
   "macOS CI reaches the release gate"
 check 'grep -Eq '"'"'^[[:space:]]*run_step "[^"]+" claude plugin validate \. --strict[[:space:]]*$'"'"' "$GATE" &&
