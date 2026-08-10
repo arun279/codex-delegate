@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I -S
 # ruff: noqa: UP006, UP035, UP045 -- runtime supports Python 3.9
 """Block unsupervised Codex turns started from Bash or Monitor tool input.
 

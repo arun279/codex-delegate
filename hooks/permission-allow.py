@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I -S
 """PermissionRequest hook with no automatic approval capability.
 
 Starting a delegated Codex turn can read local files, send prompt content to OpenAI,

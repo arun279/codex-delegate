@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I -S
 """PreToolUse gate for statically recognizable codex-delegate Workflow calls.
 
 Reject invalid prompts, wrapper overrides, and hidden labels only when object-literal options name
