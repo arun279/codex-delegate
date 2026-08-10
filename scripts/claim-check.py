@@ -39,6 +39,8 @@ ONE_CALL = re.compile(r"\b(?:one|single)[ -](?:blocking|call)\b", re.IGNORECASE)
 BLOCKS = re.compile(r"\bblock(?:s|ing|ed)\b", re.IGNORECASE)
 DISPATCH = re.compile(r"\b(?:runner|caller|jobs?)\b|Claude Code", re.IGNORECASE)
 SENTENCE = re.compile(r"[^.\n]+")
+LISTING_LIMIT = 300
+HOOKS_READ = "PreToolUse hooks read every Bash, Monitor, and Workflow call"
 RETIRED_FLAGS = {"--mode", "--base", "--commit", "--uncommitted", "--lane"}
 EXTERNAL_FLAGS = {"--git-common-dir", "--path-format", "--version"}
 RETIRED_COMMANDS = {"start", "wait", "status", "reap"}
@@ -269,7 +271,7 @@ def main() -> int:
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     hooks = HOOKS.read_text(encoding="utf-8")
-    # Published copy is the first thing a stranger reads and was the last thing anything read.
+    # Manifest descriptions are listing copy. Complete operational disclosures live in the docs.
     entries = [str(item.get("description")) for item in market.get("plugins", [])]
     listings = {
         "package.json": str(package.get("description")),
@@ -325,17 +327,56 @@ def main() -> int:
         if required not in joined:
             problems.append(f"stop contract missing from docs: {required}")
 
-    published = {listings["package.json"], listings[".claude-plugin/plugin.json"], *entries}
-    if len(published) != 1:
-        problems.append(
-            f"the npm, plugin, and marketplace descriptions are {len(published)} different "
-            "strings, so correcting the product only corrects some of them"
-        )
+    published = {
+        "package.json": listings["package.json"],
+        ".claude-plugin/plugin.json": listings[".claude-plugin/plugin.json"],
+        **{
+            f".claude-plugin/marketplace.json plugins[{index}]": description
+            for index, description in enumerate(entries)
+        },
+    }
+    for label, description in published.items():
+        if not description or len(description) > LISTING_LIMIT:
+            problems.append(
+                f"{label} description is not brief (1 through {LISTING_LIMIT} characters)"
+            )
+        if "ChatGPT Codex allowance or API-billed usage" not in description:
+            problems.append(f"{label} description omits the caller-paid quota disclosure")
+        if "Prompts and files are sent to OpenAI." not in description:
+            problems.append(f"{label} description omits the OpenAI data-egress disclosure")
+        if not re.search(r"[Rr]equires macOS.*signed-in Codex CLI", description):
+            problems.append(
+                f"{label} description omits the macOS and signed-in Codex CLI prerequisites"
+            )
+        if any(
+            "cleanup" in sentence.lower() and "bounded" not in sentence.lower()
+            for sentence in SENTENCE.findall(description)
+        ):
+            problems.append(f"{label} claims cleanup without stating that it is bounded")
+        if "tears that group down" in description or "CLEANUP_FAILED" not in description:
+            problems.append(f"{label} published description claims teardown is unconditional")
+        # A marketplace entry's description overrides plugin.json's, so the hooks disclosure has to
+        # hold on whichever of the two a reader is shown. The npm package installs no hooks.
+        if label != "package.json" and HOOKS_READ not in description:
+            problems.append(f"{label} omits the PreToolUse hooks-read disclosure")
+    plugin_description = published[".claude-plugin/plugin.json"]
+    for label, description in published.items():
+        if (
+            label.startswith(".claude-plugin/marketplace.json")
+            and description != plugin_description
+        ):
+            problems.append(f"{label} description differs from .claude-plugin/plugin.json")
     readme = documents[ROOT / "README.md"]
     skill = documents[ROOT / "skills" / "routing" / "SKILL.md"]
     security = documents[ROOT / "SECURITY.md"]
     status_reference = documents[ROOT / "skills" / "routing" / "reference" / "status-and-trust.md"]
     privacy = documents[ROOT / "PRIVACY.md"]
+    for label, text in (("README.md", readme), ("PRIVACY.md", privacy)):
+        if not all(
+            claim in text
+            for claim in ("ChatGPT sign-in", "API-key sign-in", "consume", "independently")
+        ):
+            problems.append(f"{label} omits the complete caller-paid quota disclosure")
     git_docs = {
         "README.md": readme,
         "SECURITY.md": security,
@@ -371,10 +412,6 @@ def main() -> int:
             problems.append(
                 f"{path.relative_to(ROOT)} omits duplicate-terminal STREAM_ERROR semantics"
             )
-    if any("tears that group down" in item for item in published) or not all(
-        "CLEANUP_FAILED" in item for item in published
-    ):
-        problems.append("published descriptions claim teardown is unconditional")
     if "SessionEnd" in hooks or (ROOT / "hooks" / "session-end.py").exists():
         problems.append("background session-end cleanup remains installed")
 
