@@ -21,6 +21,10 @@ No version of this project has been published. The first release number remains 
 
 ### Changed
 
+- Split concise package and marketplace listing cards from the complete disclosures in the documentation.
+  <!-- evidence: .claude-plugin/plugin.json :: Codex CLI delegation. PreToolUse hooks read every Bash -->
+- Reworked the PATH-mismatch banner to give proportional guidance for either intended installation.
+  <!-- evidence: hooks/preflight.sh :: If you intend to use the separate copy instead, disable this plugin. -->
 - Required the launcher to start with `python3 -I -S`, preventing caller-controlled Python import paths and site initialization.
   <!-- evidence: tests/security.sh :: #!/usr/bin/env -S python3 -I -S -->
 - Disclosed that every delegated run spends the signed-in user's ChatGPT Codex allowance or API-billed usage.
