@@ -133,6 +133,16 @@ check '! grep -q "command -v perl\|computer-use\|session-end" "$PREFLIGHT"' \
 check 'grep -Fq "/usr/bin/env -S python3 -I -S -c" "$PREFLIGHT" &&
        grep -Fq "sys.flags.isolated and sys.flags.no_site" "$PREFLIGHT"' \
   "preflight retains the launcher exact isolated-startup probe"
+check 'hooks_isolated=true
+       for hook in guard-bash.py guard-workflow.py permission-allow.py; do
+         [ "$(sed -n "1p" "$ROOT/hooks/$hook")" = "#!/usr/bin/env -S python3 -I -S" ] || hooks_isolated=false
+         # Asserting the line is not asserting the interpreter starts. An earlier check in this repository
+         # read a string and never ran the thing, so this executes each hook through its own shebang
+         # and requires it to answer.
+         printf %s "{}" | "$ROOT/hooks/$hook" >/dev/null 2>&1 || hooks_isolated=false
+       done
+       $hooks_isolated' \
+  "every Python hook starts, through its own shebang, under the launcher's isolated interpreter"
 check 'grep -Fq '"'"'CLAUDE_CONFIG_DIR=$WORK/home/.claude'"'"' "$PLUGIN_LIFECYCLE" &&
        grep -Fq '"'"'find "$CLAUDE_CONFIG_DIR/plugins/cache"'"'"' "$PLUGIN_LIFECYCLE" &&
        grep -Fq '"'"'MARKET_CLONE=$CLAUDE_CONFIG_DIR/plugins/marketplaces/$MARKET'"'"' "$PLUGIN_LIFECYCLE"' \
