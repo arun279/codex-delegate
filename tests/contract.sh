@@ -16,6 +16,7 @@ PREFLIGHT=$ROOT/hooks/preflight.sh
 GATE=$ROOT/scripts/gate.sh
 STUB=$ROOT/tests/stub/codex
 PLUGIN_LIFECYCLE=$ROOT/tests/plugin-lifecycle.sh
+SMART_HTTP=$ROOT/tests/plugin-lifecycle-smarthttp.py
 CI=$ROOT/.github/workflows/ci.yml
 . "$ROOT/scripts/test-temp.sh"
 test_temp_create "$ROOT" contract || exit 2
@@ -51,6 +52,36 @@ entrypoint_surface_mutation_check() {
   python3 "$ROOT/tests/entrypoints_check.py" "$BIN" >/dev/null &&
     ! python3 "$ROOT/tests/entrypoints_check.py" "$scratch" >/dev/null 2>&1
 }
+
+smart_http_bind_probe_() {
+  SMART_HTTP_BIND_FAILURE=$1 python3 - "$SMART_HTTP" "$WORK/bind.port" <<'PY'
+import errno
+import importlib.util
+import os
+import sys
+
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("plugin_lifecycle_smarthttp", path)
+if spec is None or spec.loader is None:
+    raise RuntimeError("could not load smart-HTTP helper")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+
+class ForcedBindFailure:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        if os.environ["SMART_HTTP_BIND_FAILURE"] == "sandbox":
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+        raise OSError(errno.EADDRINUSE, "Address already in use")
+
+
+module.GitHTTPServer = ForcedBindFailure
+sys.argv = [path, ".", sys.argv[2]]
+raise SystemExit(module.main())
+PY
+}
+
 printf '\n== Workflow call boundary\n'
 workflow_inline_ "agent({agentType:'codex-delegate:runner',label:'codex:test',prompt:'work'})"
 check 'workflow_denies_ && printf "%s" "$WORKFLOW_OUT" | grep -Fq "agent(prompt: string, opts?:"' \
@@ -67,6 +98,18 @@ workflow_inline_ "agent('work',{agentType:'codex-delegate:runner',label:'codex:t
 check 'workflow_denies_' "call-site wrapper model and effort are denied"
 workflow_inline_ "agent('',{agentType:'another:runner',label:'other:test'})"
 check 'workflow_allows_' "another agent type remains outside this policy"
+
+printf '\n== smart-HTTP bind classification\n'
+SMART_HTTP_OUT=$(smart_http_bind_probe_ sandbox 2>&1)
+SMART_HTTP_RC=$?
+check '[ "$SMART_HTTP_RC" -eq 77 ] &&
+       printf "%s\n" "$SMART_HTTP_OUT" | grep -Fq "SKIP: sandbox denies loopback bind"' \
+  "sandbox-denied loopback bind is SKIP"
+SMART_HTTP_OUT=$(smart_http_bind_probe_ occupied 2>&1)
+SMART_HTTP_RC=$?
+check '[ "$SMART_HTTP_RC" -ne 0 ] && [ "$SMART_HTTP_RC" -ne 77 ] &&
+       ! printf "%s\n" "$SMART_HTTP_OUT" | grep -Fq "SKIP:"' \
+  "non-sandbox loopback bind error is FAIL"
 
 printf '\n== documented runner contract\n'
 awk '
@@ -209,6 +252,20 @@ check 'grep -Eq '"'"'^[[:space:]]*run_step "[^"]+" claude plugin validate \. --s
        grep -Eq '"'"'^[[:space:]]*- run: claude plugin validate \. --strict[[:space:]]*$'"'"' "$CI" &&
        grep -Eq '"'"'^[[:space:]]*- run: claude plugin validate \./\.claude-plugin/plugin\.json --strict[[:space:]]*$'"'"' "$CI"' \
   "gate and CI retain marketplace and component strict validation"
+check 'grep -Fq '"'"'if [ "$name" = "plugin install lifecycle" ] && [ "$rc" -eq 77 ]'"'"' "$GATE" &&
+       grep -Fq '"'"'RELEASE GATE: PASS with $SANDBOX_SKIPPED sandbox-skipped steps'"'"' "$GATE" &&
+       grep -Fq '"'"'if [ "$SERVER_RC" -eq 77 ]'"'"' "$PLUGIN_LIFECYCLE"' \
+  "gate renders only the lifecycle sandbox signal as a counted SKIP"
+check 'grep -Fq '"'"'done < <(git ls-files -z -- '"'"'"'"'"'*.py'"'"'"'"'"' bin/codex-delegate pyproject.toml)'"'"' "$GATE" &&
+       grep -Fq '"'"'run_step "ruff check" run_tool ruff check "${TRACKED_RUFF_FILES[@]}"'"'"' "$GATE" &&
+       grep -Fq '"'"'run_step "ruff format" run_tool ruff format --check "${TRACKED_RUFF_FILES[@]}"'"'"' "$GATE" &&
+       grep -Fq '"'"'run_step "ruff security" run_tool ruff check --select S "${TRACKED_RUFF_FILES[@]}"'"'"' "$GATE"' \
+  "ruff scans receive every tracked Ruff target and no untracked files"
+check 'grep -Fq '"'"'run_step "privacy scan" python3 scripts/privacy-scan.py --tracked-only'"'"' "$GATE" &&
+       grep -Fq '"'"'arguments = ["ls-files", "--cached", "-z"]'"'"' "$ROOT/scripts/privacy-scan.py" &&
+       grep -Fq '"'"'historical = historical_targets(ROOT)'"'"' "$ROOT/scripts/privacy-scan.py" &&
+       grep -Fq '"'"'references = reference_targets(ROOT)'"'"' "$ROOT/scripts/privacy-scan.py"' \
+  "privacy gate scans tracked working-tree files, history, and refs"
 check '[ -f "$ROOT/hooks/guard-bash.py" ] && [ -d "$ROOT/tests/corpus" ] &&
        [ -f "$ROOT/scripts/privacy-scan.py" ] && [ -f "$ROOT/scripts/npm-pack-check.py" ] &&
        [ -f "$ROOT/scripts/gate.sh" ]' \

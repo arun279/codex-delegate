@@ -128,7 +128,18 @@ python3 "$ROOT/tests/plugin-lifecycle-smarthttp.py" "$REMOTE" "$PORT_FILE" \
   >"$WORK/server.out" 2>"$WORK/server.err" &
 SERVER_PID=$!
 wait_file "$PORT_FILE" || {
+  if kill -0 "$SERVER_PID" 2>/dev/null; then
+    cat "$WORK/server.err" >&2
+    echo "plugin-lifecycle: smart-HTTP server did not publish its port" >&2
+    exit 2
+  fi
+  SERVER_RC=0
+  wait "$SERVER_PID" || SERVER_RC=$?
+  SERVER_PID=
   cat "$WORK/server.err" >&2
+  if [ "$SERVER_RC" -eq 77 ]; then
+    exit 77
+  fi
   echo "plugin-lifecycle: smart-HTTP server did not publish its port" >&2
   exit 2
 }

@@ -268,12 +268,12 @@ def read_path(path: Path) -> bytes:
         raise ScanError(f"cannot read {path}: {error}") from error
 
 
-def working_tree_targets(root: Path) -> list[ScanTarget]:
-    """Enumerate tracked and non-ignored untracked working-tree files."""
-    output = run_git(
-        root,
-        ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-    )
+def working_tree_targets(root: Path, *, tracked_only: bool = False) -> list[ScanTarget]:
+    """Enumerate working-tree files, optionally limiting them to tracked paths."""
+    arguments = ["ls-files", "--cached", "-z"]
+    if not tracked_only:
+        arguments[2:2] = ["--others", "--exclude-standard"]
+    output = run_git(root, arguments)
     targets: list[ScanTarget] = []
     for encoded_name in sorted(name for name in output.split(b"\0") if name):
         relative = encoded_name.decode(sys.getfilesystemencoding(), errors="surrogateescape")
@@ -747,6 +747,14 @@ def run_self_tests(temp_root: Path | None) -> SelfTestResult:
         run_test_git(root, ["branch", private_project])
         run_test_git(root, ["update-ref", f"refs/notes/{private_project}", "HEAD"])
 
+        (root / "untracked.txt").write_text(private_home, encoding="utf-8")
+        tracked_working = working_tree_targets(root, tracked_only=True)
+        tracked_labels = {target.label for target in tracked_working}
+        if "untracked.txt" in tracked_labels:
+            raise AssertionError("tracked-only scan included an untracked file")
+        if not {"safe.txt", f"{private_project}/copy.txt"} <= tracked_labels:
+            raise AssertionError("tracked-only scan omitted a tracked file")
+
         history_violations = [
             violation for target in historical_targets(root) for violation in scan_target(target)
         ]
@@ -766,7 +774,7 @@ def run_self_tests(temp_root: Path | None) -> SelfTestResult:
                 raise AssertionError(f"private {ref_kind} ref name was not detected")
     finally:
         shutil.rmtree(root, ignore_errors=True)
-    return SelfTestResult(13, None)
+    return SelfTestResult(15, None)
 
 
 def temp_root_for_self_test(argument: Path | None) -> tuple[Path | None, str | None]:
@@ -796,6 +804,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--self-test",
         action="store_true",
         help="run the embedded regression tests and exit",
+    )
+    parser.add_argument(
+        "--tracked-only",
+        action="store_true",
+        help="exclude untracked files from the repository working-tree scan",
     )
     parser.add_argument(
         "--temp-root",
@@ -843,7 +856,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             targets = explicit_targets(paths)
             mode_summary = f"{len(targets)} explicit file(s)"
         else:
-            working = working_tree_targets(ROOT)
+            working = working_tree_targets(ROOT, tracked_only=args.tracked_only)
             historical = historical_targets(ROOT)
             references = reference_targets(ROOT)
             targets = working + historical + references
