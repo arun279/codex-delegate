@@ -21,8 +21,8 @@ No version of this project has been published, so every entry below stays under 
   <!-- evidence: tests/lifecycle.sh :: first terminal event wins even when Codex does not exit -->
 - Added a bounded deadline and cleanup ladder for the inherited Codex process group.
   <!-- evidence: tests/lifecycle.sh :: deadline kills the complete inherited process group -->
-- Added a reduced 16-field status record.
-  <!-- evidence: tests/run.sh :: status has exactly the reduced 16-field schema -->
+- Added a reduced 17-field status record, including Codex CLI-reported token usage when available.
+  <!-- evidence: tests/run.sh :: Codex CLI usage counters pass through unchanged -->
 
 ### Changed
 

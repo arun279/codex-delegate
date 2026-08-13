@@ -123,7 +123,7 @@ By default, `workspace-write` protects each writable root's `.git` path and the 
 
 A stopped run uses verdict `STOPPED` and exits with 128 plus the signal number: 130 for `SIGINT`, 143 for `SIGTERM`, and 129 for `SIGHUP`. Argument and catalog validation exit 2. Initial `--prompt-file` path validation exits 2. Empty prompt input, stdin read failures, prompt storage failures, and Codex launch errors are `LAUNCH_ERROR` (12).
 
-`status.json` has exactly 16 fields: `schema_version`, `runid`, `verdict`, `exit_code`, `diagnostic`, `signal`, `model`, `effort`, `sandbox`, `deadline_s`, `duration_s`, `process_exit_code`, `terminal_event`, `final_message_path`, `events_path`, and `stderr_path`. `duration_s` includes prompt ingestion, the Codex turn, and teardown after allocation. Read `verdict` and `exit_code` first, then `diagnostic` and the artifact paths when a run fails.
+`status.json` has exactly 17 fields: `schema_version`, `runid`, `verdict`, `exit_code`, `diagnostic`, `signal`, `model`, `effort`, `sandbox`, `deadline_s`, `duration_s`, `process_exit_code`, `terminal_event`, `usage`, `final_message_path`, `events_path`, and `stderr_path`. `usage` is the token-counter object reported by the Codex CLI in `turn.completed`, passed through without renaming or calculation; it is null when the CLI does not report usage or the run has no completed event. `duration_s` includes prompt ingestion, the Codex turn, and teardown after allocation. Read `verdict` and `exit_code` first, then `diagnostic` and the artifact paths when a run fails.
 
 ## Privacy, trust, and cleanup limits
 

@@ -314,11 +314,17 @@ FINAL_LINE=$(grep -n '^--- FINAL MESSAGE' "$WORK/completed.out" | cut -d: -f1)
 STATUS_LINE=$(grep -n '^--- STATUS' "$WORK/completed.out" | cut -d: -f1)
 check '[ "$FINAL_LINE" -lt "$STATUS_LINE" ]' "final message precedes status"
 check 'python3 "$ROOT/tests/status_schema.py" "$RD/status.json"' \
-  "status has exactly the reduced 16-field schema"
+  "status has exactly the reduced 17-field schema"
 check '[ "$(stat -f %Lp "$RD/status.json")" = 400 ]' "status is published read-only"
 check '[ "$(json_ "$RD/status.json" terminal_event)" = '"'"'"turn.completed"'"'"' ] &&
        python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["final_message_path"] != sys.argv[2])'"'"' "$RD/status.json" "$RD/final.txt"' \
   "terminal type and final path are actionable"
+check 'python3 -c '"'"'import json,sys; expected={"input_tokens":101,"cached_input_tokens":80,"cache_write_input_tokens":7,"output_tokens":23,"reasoning_output_tokens":5}; raise SystemExit(json.load(open(sys.argv[1]))["usage"] != expected)'"'"' "$RD/status.json"' \
+  "Codex CLI usage counters pass through unchanged"
+
+run_case missing_usage missing-usage 0
+check '[ "$(json_ "$WORK/runs/missing-usage/status.json" usage)" = null ]' \
+  "a completed event without usage publishes null"
 
 run_case native_mismatch native-output 0
 RD=$WORK/runs/native-output
@@ -538,7 +544,7 @@ wait "$LIVE_LOCK_PID" 2>/dev/null || true
 check '[ "$RC" = 0 ] && [ -d "$LIVE_ROOT/live-old" ]' \
   "a live proven run survives limit zero regardless of age"
 
-check 'status_schemas_' "every run-suite verdict fixture has exactly 16 status fields"
+check 'status_schemas_' "every run-suite verdict fixture has exactly 17 status fields"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 exit $((FAIL > 0))

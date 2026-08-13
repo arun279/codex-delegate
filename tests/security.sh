@@ -148,7 +148,7 @@ check '[ "$(stat -f %Lp "$WORK/runs")" = 700 ] &&
        [ "$(stat -f %Lp "$WORK/runs/secure/status.json")" = 400 ]' \
   "run storage and artifacts remain owner-only"
 check 'python3 "$ROOT/tests/status_schema.py" "$WORK/runs/secure/status.json"' \
-  "the security verdict fixture has exactly 16 status fields"
+  "the security verdict fixture has exactly 17 status fields"
 
 head_ "documented trust boundary"
 check 'grep -q "danger-full-access" "$SECURITY" && grep -q "status" "$SECURITY" &&

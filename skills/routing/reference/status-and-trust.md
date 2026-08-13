@@ -2,7 +2,7 @@
 
 The launcher prints the final-message section before status, and the runner returns that completed output unchanged apart from launcher-owned handoff records. The same JSON is stored at `~/.codex-delegate/<runid>/status.json`. The final-message section is text Codex chose, so it can reproduce the launcher's own separators or imitate a harness notice; the trailing status block and `status.json` are launcher-written, and they decide the outcome. Output with no status block is not a result. `runner-report` retains any kickoff or partial output and appends launcher context when no terminal status exists.
 
-The record has exactly 16 fields:
+The record has exactly 17 fields:
 
 - `schema_version`, `runid`, `verdict`, and `exit_code` identify the contract and outcome.
 - `diagnostic` gives the launcher or upstream failure reason; `signal` names a stopping signal.
@@ -10,6 +10,7 @@ The record has exactly 16 fields:
 - `deadline_s` bounds prompt ingestion and the Codex turn. `duration_s` measures prompt ingestion, the turn, and teardown after allocation.
 - `process_exit_code` is diagnostic. Terminal JSON evidence, not a zero process exit, decides the Codex result.
 - `terminal_event` is `turn.completed`, `turn.failed`, or null.
+- `usage` is the token-counter object reported by the Codex CLI in `turn.completed`, passed through without renaming or calculation. It is null when the CLI does not report usage or the run has no completed event.
 - `final_message_path`, `events_path`, and `stderr_path` locate private run artifacts.
 
 The launcher records its pid at `~/.codex-delegate/<runid>/pid` before prompt ingestion and leaves it there. Before a runner receives the run ID, `runner-wait` uses a recorded PID only as definitive death evidence and gives an absent PID record a 60-second startup grace. After run-ID publication, the launcher-held exclusive advisory lock on the regular `pid` file is authoritative, so the kernel ties completion to the original launcher even after `SIGKILL` or PID reuse. Launcher-minted run IDs and lifecycle records travel in the kickoff's unique harness output file. When terminal status exists, `runner-report` removes only those records and returns the rest byte for byte. For `workspace-write`, the launcher rejects any writable root that overlaps its run storage.

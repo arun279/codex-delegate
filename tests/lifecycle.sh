@@ -287,7 +287,7 @@ printf 'LATE TERMINAL OUTPUT' >"$WORK/edge.expected"
 check 'cmp -s "$WORK/edge.expected" "$RD/final.txt"' \
   "a captured message is kept as evidence without becoming a completion"
 
-check 'status_schemas_' "every lifecycle verdict fixture has exactly 16 status fields"
+check 'status_schemas_' "every lifecycle verdict fixture has exactly 17 status fields"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 exit $((FAIL > 0))

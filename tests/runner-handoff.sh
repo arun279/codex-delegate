@@ -79,7 +79,7 @@ open(sys.argv[2],"wb").write(b"".join(line for offset,line in lines if offset no
          [ ! -s "$WORK/'"$name"'.report.err" ]' \
     "$name report is the launcher output without handoff records"
   check 'python3 "$ROOT/tests/status_schema.py" --verdict "$expected_verdict" "$rd/status.json"' \
-    "$name report has the expected verdict and exact 16-field schema"
+    "$name report has the expected verdict and exact 17-field schema"
 }
 
 printf '\n== runner handoff round trips\n'
