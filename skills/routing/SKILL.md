@@ -7,6 +7,8 @@ description: Route bounded coding, investigation, analysis, and independent revi
 
 Use `codex-delegate:runner` to send exactly one bounded job to Codex. Decide whether to delegate, choose the Codex model and effort, supply a self-contained prompt, and judge the result. The runner owns the launcher call and the wait on it. Never run `codex exec` directly.
 
+Each delegated run spends the signed-in Codex CLI account's ChatGPT Codex allowance or API-billed usage. Parallel or repeated runs each spend that usage independently. The plugin supplies no shared or sponsored capacity.
+
 ## Route the work
 
 Send Codex:

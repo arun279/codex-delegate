@@ -1,14 +1,8 @@
 #!/usr/bin/env -S python3 -I -S
-"""PermissionRequest hook with no automatic approval capability.
+"""Inert PermissionRequest hook that leaves the normal permission decision unchanged.
 
-Starting a delegated Codex turn can read local files, send prompt content to OpenAI,
-and, depending on the selected sandbox, change the machine. A hook that sees only the
-shell command cannot establish the user's intent for those effects. It therefore must
-not approve the command or install a persistent name-based Bash rule.
-
-PermissionRequest hooks express "make the normal permission decision" by producing no
-output and exiting successfully. Keeping this inert hook in place makes upgrades from
-older plugin versions safe even when their cached hook manifest still references it.
+Keeping it shipped pins this hook surface, and security checks assert its presence so a
+future Bash auto-approver cannot be introduced silently.
 """
 
 import sys
