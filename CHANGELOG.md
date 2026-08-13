@@ -21,6 +21,8 @@ No version of this project has been published. The first release number remains 
 
 ### Changed
 
+- Clarified delegated account usage, release prerequisites, runner timing, and shipped hook behavior.
+  <!-- evidence: skills/routing/SKILL.md :: The plugin supplies no shared or sponsored capacity. -->
 - Split concise package and marketplace listing cards from the complete disclosures in the documentation.
   <!-- evidence: .claude-plugin/plugin.json :: Codex CLI delegation. PreToolUse hooks read every Bash -->
 - Reworked the PATH-mismatch banner to give proportional guidance for either intended installation.
