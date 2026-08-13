@@ -49,7 +49,7 @@ def validate(status: dict[str, object], number: int, work: Path) -> list[str]:
         "exit_code": 0,
         "diagnostic": None,
         "signal": None,
-        "model": "gpt-5.6-sol",
+        "model": "stub-model-a",
         "effort": "medium",
         "sandbox": "read-only",
         "deadline_s": 60,
@@ -99,9 +99,15 @@ def main() -> int:
         for problem in validate(status, number, work)
     ]
     baseline = stable(statuses[0])
+    final_contents = [
+        (work / "runs" / f"determinism-{number:02d}" / "final.txt").read_bytes()
+        for number in range(1, count + 1)
+    ]
     for number, status in enumerate(statuses[1:], 2):
         if stable(status) != baseline:
             problems.append(f"run {number} changed a non-variable status field")
+        if final_contents[number - 1] != final_contents[0]:
+            problems.append(f"run {number} changed final.txt content")
     for problem in problems:
         print(f"FAIL {problem}")
     if problems:

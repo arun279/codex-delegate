@@ -192,6 +192,34 @@ def check_protocol(launcher: str, wait: str, report: str, work: Path) -> list[st
         },
     )
 
+    refusal_prompt = work / "refusal-prompt.txt"
+    refusal_prompt.write_text("runner refusal probe\n", encoding="utf-8")
+    refusal = subprocess.run(  # noqa: S603 -- Executes the selected launcher under test.
+        [
+            str(LAUNCHER),
+            "run",
+            "--prompt-file",
+            str(refusal_prompt),
+            "--sandbox",
+            "read-only",
+            "--deadline",
+            "60",
+            "--runner-handoff",
+            "--runid",
+            "runner-refusal-probe",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=10,
+        check=False,
+    )
+    if (
+        refusal.returncode != 2
+        or "--runner-handoff cannot be combined with --runid" not in refusal.stderr
+    ):
+        problems.append("launcher accepted --runner-handoff combined with --runid")
+
     (run_root / "runner-a1b2c3d4e5f6a7b8").mkdir()
     success_output = work / "success.out"
     if launch(launcher_script, success_output, env) != 0:
@@ -467,7 +495,7 @@ def main() -> int:
         return 1
     print(
         "runner-protocol: PASS: all 3 blocks execute; minted-ID, collision, success, "
-        "startup-failure, pre-RUNID-death, lock-authority, SIGKILL, symlinked-temp, "
+        "handoff/runid refusal, startup-failure, pre-RUNID-death, lock-authority, SIGKILL, symlinked-temp, "
         "absent-output, missing-end-record, no-result, and verbatim-report paths pass"
     )
     return 0

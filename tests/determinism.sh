@@ -29,7 +29,7 @@ i=1
 while [ "$i" -le "$N" ]; do
   runid=$(printf 'determinism-%02d' "$i")
   STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
-    --cwd "$WORK/job" --model gpt-5.6-sol --effort medium --deadline 60 \
+    --cwd "$WORK/job" --model stub-model-a --effort medium --deadline 60 \
     --runid "$runid" >"$WORK/output-$i" 2>"$WORK/error-$i"
   rc=$?
   printf '%s\n' "$rc" >"$WORK/exit-$i"

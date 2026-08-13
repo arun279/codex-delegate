@@ -138,7 +138,7 @@ isolation_mutation_check() {
     SECRETS_MARKER="$WORK/isolated-secrets" \
     "$isolated/codex-delegate" run --prompt-file "$WORK/isolation-prompt.txt" \
     --sandbox read-only --cwd "$WORK/isolation-job" --deadline 10 \
-    --model gpt-5.6-sol --effort medium --runid isolated-neighbor \
+    --model stub-model-a --effort medium --runid isolated-neighbor \
     >"$WORK/isolated-copy.out" 2>&1
   isolated_rc=$?
   env HOME="$WORK/isolation-home" PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -146,12 +146,12 @@ isolation_mutation_check() {
     SECRETS_MARKER="$WORK/deisolated-secrets" \
     "$deisolated/codex-delegate" run --prompt-file "$WORK/isolation-prompt.txt" \
     --sandbox read-only --cwd "$WORK/isolation-job" --deadline 10 \
-    --model gpt-5.6-sol --effort medium --runid deisolated-neighbor \
+    --model stub-model-a --effort medium --runid deisolated-neighbor \
     >"$WORK/deisolated-copy.out" 2>&1
   deisolated_rc=$?
 
   [ "$isolated_rc" -eq 0 ] && [ ! -e "$WORK/isolated-secrets" ] &&
-    python3 -c 'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["verdict"] != "COMPLETED")' \
+    python3 "$ROOT/tests/status_schema.py" --verdict COMPLETED \
       "$WORK/isolated-runs/isolated-neighbor/status.json" &&
     [ "$deisolated_rc" -ne 0 ] && [ -e "$WORK/deisolated-secrets" ]
 }

@@ -33,11 +33,14 @@ head_() { printf '\n== %s\n' "$*"; }
 json_() {
   python3 -c 'import json,sys; value=json.load(open(sys.argv[1])); [value:=value[key] for key in sys.argv[2].split(".")]; print(json.dumps(value))' "$1" "$2"
 }
+status_schemas_() {
+  python3 "$ROOT/tests/status_schema.py" "$WORK"/runs/*/status.json
+}
 
 run_case() {
   local mode=$1 runid=$2 expected=$3 rc
   STUB_MODE=$mode "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
-    --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+    --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
     --runid "$runid" >"$WORK/$runid.out" 2>"$WORK/$runid.err"
   rc=$?
   check '[ "$rc" = "$expected" ]' "$runid exits $expected (got $rc)"
@@ -49,7 +52,7 @@ run_case() {
 stdin_case() {
   local name=$1 expected=$2 capture=$WORK/$1.stdin rc
   STUB_MODE=ok STUB_STDIN_CAPTURE=$capture "$BIN" run --prompt-stdin \
-    --sandbox read-only --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol \
+    --sandbox read-only --cwd "$WORK/job" --deadline 10 --model stub-model-a \
     --effort medium --runid "$name" >"$WORK/$name.out" 2>"$WORK/$name.err"
   rc=$?
   check '[ "$rc" = 0 ] && cmp -s "$expected" "$capture"' \
@@ -80,7 +83,7 @@ head_ "live model catalog"
 RC=$?
 check '[ "$RC" = 0 ] && head -1 "$WORK/models.out" | grep -q $'"'"'^slug\tdefault_effort\treasoning_efforts$'"'"'' \
   "models prints one compact live-catalog table"
-check 'grep -q $'"'"'^gpt-5.6-sol\tmedium\tlow,medium,high,xhigh,max,ultra$'"'"' "$WORK/models.out"' \
+check 'grep -q $'"'"'^stub-model-a\tmedium\tlow,medium,high,xhigh,max,ultra$'"'"' "$WORK/models.out"' \
   "models reports the supported pair"
 STUB_CATALOG_MODE=minimal "$BIN" models >"$WORK/models-minimal.out" 2>&1
 RC=$?
@@ -95,7 +98,7 @@ RC=$?
 check '[ "$RC" = 2 ] && grep -q "exit 75" "$WORK/models-fail.out"' \
   "an unavailable live catalog fails instead of degrading"
 STUB_CATALOG_MODE=fail STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" \
-  --sandbox read-only --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol \
+  --sandbox read-only --cwd "$WORK/job" --deadline 10 --model stub-model-a \
   --effort medium --runid catalog-fail-explicit \
   >"$WORK/catalog-fail-explicit.out" 2>"$WORK/catalog-fail-explicit.err"
 RC=$?
@@ -103,7 +106,7 @@ check '[ "$RC" = 0 ] && grep -q "exit 75" "$WORK/catalog-fail-explicit.err" &&
        grep -q "explicit pair unvalidated" "$WORK/catalog-fail-explicit.err"' \
   "an explicit pair proceeds with one warning when the catalog is unavailable"
 STUB_CATALOG_MODE=fail "$BIN" run --prompt-file "$WORK/prompt.txt" \
-  --sandbox read-only --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol \
+  --sandbox read-only --cwd "$WORK/job" --deadline 10 --model stub-model-a \
   >"$WORK/catalog-fail-no-effort.out" 2>&1
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "exit 75" "$WORK/catalog-fail-no-effort.out"' \
@@ -139,18 +142,46 @@ check '[ "$RC" = 2 ] && grep -q "requires --sandbox workspace-write" "$WORK/netw
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "not in the live catalog" "$WORK/model.out"' \
   "an unknown model is rejected before allocation"
-"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --model gpt-5.6-sol \
+"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --model stub-model-a \
   --effort impossible >"$WORK/effort.out" 2>&1
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "not supported" "$WORK/effort.out"' \
   "an unsupported model-effort pair is rejected"
+
+sed 's/if platform.system() != "Darwin":/if True:/' "$BIN" \
+  >"$WORK/platform-unsupported-launcher"
+chmod 700 "$WORK/platform-unsupported-launcher"
+"$WORK/platform-unsupported-launcher" --help >"$WORK/platform.out" 2>&1
+RC=$?
+check '[ "$RC" = 18 ] && grep -q "unsupported platform" "$WORK/platform.out"' \
+  "an unsupported platform returns PLATFORM_UNSUPPORTED"
 "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --runid ../escape \
   >"$WORK/runid.out" 2>&1
 RC=$?
 check '[ "$RC" = 2 ] && [ ! -e "$WORK/escape" ]' "a traversing run id is rejected"
+
+mkdir "$WORK/launch-error-bin"
+printf '%s\n' \
+  '#!/bin/bash' \
+  'if [ "${1:-}" = debug ] && [ "${2:-}" = models ]; then' \
+  '  printf '\''%s\n'\'' '\''{"models":[{"slug":"stub-model-a","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"}]}]}'\''' \
+  '  rm -- "$0"' \
+  '  exit 0' \
+  'fi' \
+  'exit 64' >"$WORK/launch-error-bin/codex"
+chmod 700 "$WORK/launch-error-bin/codex"
+PATH=$WORK/launch-error-bin:/usr/bin:/bin:/usr/sbin:/sbin \
+  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+  --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
+  --runid launch-error >"$WORK/launch-error.out" 2>"$WORK/launch-error.err"
+RC=$?
+check '[ "$RC" = 12 ] &&
+       [ "$(json_ "$WORK/runs/launch-error/status.json" verdict)" = '\''"LAUNCH_ERROR"'\'' ] &&
+       grep -q "could not launch Codex" "$WORK/launch-error.out"' \
+  "an OS launch failure publishes LAUNCH_ERROR"
 STUB_ARGV_CAPTURE=$WORK/absent-prompt.argv \
   "$BIN" run --prompt-file "$WORK/absent-prompt.txt" --sandbox read-only \
-  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
   --runid absent-prompt >"$WORK/absent-prompt.out" 2>"$WORK/absent-prompt.err"
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "cannot read prompt file" "$WORK/absent-prompt.err" &&
@@ -163,13 +194,13 @@ head_ "native exec invocation and prompt integrity"
 STUB_ARGV_CAPTURE=$WORK/argv.txt STUB_STDIN_CAPTURE=$WORK/stdin.txt STUB_MODE=ok \
   "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox workspace-write --network \
   --cwd "$WORK/job" --add-dir "$WORK/extra" --schema "$WORK/schema.json" \
-  --deadline 10 --model gpt-5.6-sol --effort high --runid argv \
+  --deadline 10 --model stub-model-a --effort high --runid argv \
   >"$WORK/argv.out" 2>"$WORK/argv.err"
 RC=$?
 check '[ "$RC" = 0 ] && cmp -s "$WORK/prompt.txt" "$WORK/stdin.txt"' \
   "prompt bytes reach Codex only through stdin"
 check 'grep -Fxq "mode=exec" "$WORK/argv.txt" && grep -Fxq "json=true" "$WORK/argv.txt" &&
-       grep -Fxq "model=gpt-5.6-sol" "$WORK/argv.txt" && grep -Fxq "effort=high" "$WORK/argv.txt"' \
+       grep -Fxq "model=stub-model-a" "$WORK/argv.txt" && grep -Fxq "effort=high" "$WORK/argv.txt"' \
   "Codex receives exec, JSON, model, and effort"
 check 'grep -Fxq "sandbox=workspace-write" "$WORK/argv.txt" && grep -Fxq "network=enabled" "$WORK/argv.txt" &&
        grep -Fxq "cwd=$WORK/job" "$WORK/argv.txt" && grep -Fxq "process_cwd=$WORK/job" "$WORK/argv.txt"' \
@@ -178,9 +209,18 @@ check 'grep -Fxq "add_dir=$WORK/extra" "$WORK/argv.txt" && grep -Fxq "schema=$WO
   "native add-dir and output-schema flags survive"
 check '! grep -Fq "Prompt body" "$WORK/argv.txt"' "prompt text is absent from captured argv"
 
+STUB_ARGV_CAPTURE=$WORK/workspace-offline.argv STUB_MODE=ok \
+  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox workspace-write \
+  --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
+  --runid workspace-offline >"$WORK/workspace-offline.out" 2>"$WORK/workspace-offline.err"
+RC=$?
+check '[ "$RC" = 0 ] && grep -Fxq "sandbox=workspace-write" "$WORK/workspace-offline.argv" &&
+       grep -Fxq "network=disabled" "$WORK/workspace-offline.argv"' \
+  "workspace-write succeeds with network disabled by default"
+
 STUB_ARGV_CAPTURE=$WORK/read-only-add-dir.argv STUB_MODE=ok \
   "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
-  --cwd "$WORK/job" --add-dir "$HOME" --deadline 10 --model gpt-5.6-sol \
+  --cwd "$WORK/job" --add-dir "$HOME" --deadline 10 --model stub-model-a \
   --effort medium --runid read-only-add-dir \
   >"$WORK/read-only-add-dir.out" 2>"$WORK/read-only-add-dir.err"
 RC=$?
@@ -234,7 +274,7 @@ CODEX_DELEGATE_PROMPT_77777777777777777777777777777777
 : >"$WORK/stdin-empty.expected"
 STUB_MODE=ok STUB_STDIN_CAPTURE=$WORK/stdin-empty.stdin \
   "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" --deadline 10 \
-  --model gpt-5.6-sol --effort medium --runid stdin-empty \
+  --model stub-model-a --effort medium --runid stdin-empty \
   >"$WORK/stdin-empty.out" 2>"$WORK/stdin-empty.err" <<'CODEX_DELEGATE_PROMPT_88888888888888888888888888888888'
 CODEX_DELEGATE_PROMPT_88888888888888888888888888888888
 RC=$?
@@ -245,7 +285,7 @@ check '[ "$RC" = 12 ] && grep -q "the prompt is empty" "$WORK/stdin-empty.err" &
   "an empty stdin body is stored empty and rejected before Codex starts"
 
 STUB_MODE=ok "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" \
-  --deadline 10 --model gpt-5.6-sol --effort medium --runid stdin-closed \
+  --deadline 10 --model stub-model-a --effort medium --runid stdin-closed \
   0<&- >"$WORK/stdin-closed.out" 2>"$WORK/stdin-closed.err"
 RC=$?
 check '[ "$RC" = 12 ] &&
@@ -255,7 +295,7 @@ check '[ "$RC" = 12 ] &&
   "a closed stdin is a clean pre-launch validation failure"
 
 STUB_MODE=ok "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" \
-  --deadline 10 --model gpt-5.6-sol --effort medium --runid stdin-unreadable \
+  --deadline 10 --model stub-model-a --effort medium --runid stdin-unreadable \
   0>/dev/null >"$WORK/stdin-unreadable.out" 2>"$WORK/stdin-unreadable.err"
 RC=$?
 check '[ "$RC" = 12 ] &&
@@ -273,7 +313,7 @@ check 'grep -q "STUB FINAL MESSAGE" "$WORK/completed.out"' "blocking run returns
 FINAL_LINE=$(grep -n '^--- FINAL MESSAGE' "$WORK/completed.out" | cut -d: -f1)
 STATUS_LINE=$(grep -n '^--- STATUS' "$WORK/completed.out" | cut -d: -f1)
 check '[ "$FINAL_LINE" -lt "$STATUS_LINE" ]' "final message precedes status"
-check 'python3 -c '"'"'import json,sys; expected={"schema_version","runid","verdict","exit_code","diagnostic","signal","model","effort","sandbox","deadline_s","duration_s","process_exit_code","terminal_event","final_message_path","events_path","stderr_path"}; actual=set(json.load(open(sys.argv[1]))); raise SystemExit(actual != expected)'"'"' "$RD/status.json"' \
+check 'python3 "$ROOT/tests/status_schema.py" "$RD/status.json"' \
   "status has exactly the reduced 16-field schema"
 check '[ "$(stat -f %Lp "$RD/status.json")" = 400 ]' "status is published read-only"
 check '[ "$(json_ "$RD/status.json" terminal_event)" = '"'"'"turn.completed"'"'"' ] &&
@@ -292,7 +332,7 @@ LATE_PROMPT_GATE=$WORK/late-document-prompt-gate
 mkfifo "$LATE_PROMPT_GATE"
 STUB_MODE=native_mismatch STUB_STDIN_CAPTURE=$LATE_PROMPT_GATE \
   "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
-  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
   --runid late-document >"$WORK/late-document.out" 2>"$WORK/late-document.err" &
 LATE_PID=$!
 (
@@ -325,7 +365,7 @@ check '[ "$RC" = 0 ] && cmp -s "$WORK/late-document.expected" "$LATE_RD/final.tx
   "a native document arriving one second after the terminal event is collected"
 
 STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
-  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
   --runid stdout-closed 1>&- 2>"$WORK/stdout-closed.err"
 RC=$?
 check '[ "$RC" = 0 ] &&
@@ -334,7 +374,7 @@ check '[ "$RC" = 0 ] &&
   "a closed stdout preserves the completed verdict exit without a traceback"
 
 STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
-  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
   --runid stdout-unwritable 1</dev/null 2>"$WORK/stdout-unwritable.err"
 RC=$?
 check '[ "$RC" = 0 ] &&
@@ -343,7 +383,7 @@ check '[ "$RC" = 0 ] &&
   "an unwritable stdout preserves the completed verdict exit without a traceback"
 
 STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
-  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
   --runid stdout-broken-pipe 2>"$WORK/stdout-broken-pipe.err" | head -n 1 \
   >"$WORK/stdout-broken-pipe.out"
 RC=${PIPESTATUS[0]}
@@ -388,6 +428,8 @@ CODEX_DELEGATE_HOME=$WORK/job/control "$BIN" run --prompt-file "$WORK/prompt.txt
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "overlaps writable root" "$WORK/overlap.out"' \
   "workspace-write cannot overlap launcher control state"
+
+check 'status_schemas_' "every run-suite verdict fixture has exactly 16 status fields"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 exit $((FAIL > 0))

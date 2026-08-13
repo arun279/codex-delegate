@@ -48,6 +48,9 @@ json_() {
 text_() {
   python3 -c 'import json,sys; value=json.load(open(sys.argv[1]))[sys.argv[2]]; print("null" if value is None else value)' "$1" "$2"
 }
+status_schemas_() {
+  python3 "$ROOT/tests/status_schema.py" "$WORK"/runs/*/status.json
+}
 wait_file() {
   local path=$1 i=0
   while [ ! -s "$path" ] && [ "$i" -lt 200 ]; do
@@ -66,7 +69,7 @@ wait_gone() {
 }
 
 run_args=(--prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job"
-  --model gpt-5.6-sol --effort medium)
+  --model stub-model-a --effort medium)
 
 head_ "blocking terminal path"
 SECONDS=0
@@ -192,7 +195,7 @@ WRITER=$!
 PIDS+=("$WRITER")
 SECONDS=0
 STUB_MODE=ok "$BIN" run --prompt-stdin --sandbox read-only --cwd "$WORK/job" \
-  --model gpt-5.6-sol --effort medium --deadline 1 --runid lc-slow-prompt \
+  --model stub-model-a --effort medium --deadline 1 --runid lc-slow-prompt \
   <"$WORK/slow-prompt.fifo" >"$WORK/slow-prompt.out" 2>"$WORK/slow-prompt.err"
 RC=$?
 ELAPSED=$SECONDS
@@ -206,7 +209,7 @@ check '[ "$RC" = 11 ] && [ "$ELAPSED" -lt 3 ] && [ -s "$RD/status.json" ] &&
 head_ "prompt failure publishes status after allocation"
 : >"$WORK/empty-prompt.txt"
 STUB_MODE=ok "$BIN" run --prompt-file "$WORK/empty-prompt.txt" --sandbox read-only \
-  --cwd "$WORK/job" --model gpt-5.6-sol --effort medium --deadline 10 \
+  --cwd "$WORK/job" --model stub-model-a --effort medium --deadline 10 \
   --runid lc-empty-prompt >"$WORK/empty-prompt.out" 2>"$WORK/empty-prompt.err"
 RC=$?
 RD=$WORK/runs/lc-empty-prompt
@@ -242,6 +245,34 @@ signal_case() {
 }
 signal_case lc-int INT 130
 signal_case lc-term TERM 143
+signal_case lc-hup HUP 129
+
+head_ "cleanup ladder"
+# An unprivileged signal-immune process cannot survive SIGKILL, so this fixture asserts the observable ladder records instead.
+: >"$WORK/cleanup-signals"
+STUB_MODE=cleanup_ladder STUB_SIGNAL_CAPTURE=$WORK/cleanup-signals \
+  "$BIN" run "${run_args[@]}" --deadline 10 --runid lc-cleanup-ladder \
+  >"$WORK/cleanup-ladder.out" 2>"$WORK/cleanup-ladder.err"
+RC=$?
+RD=$WORK/runs/lc-cleanup-ladder
+check '[ "$RC" = 0 ] && [ "$(text_ "$RD/status.json" verdict)" = COMPLETED ] &&
+       [ "$(text_ "$RD/status.json" process_exit_code)" = -9 ] &&
+       [ "$(sed -n "1p" "$WORK/cleanup-signals")" = INT ] &&
+       [ "$(sed -n "2p" "$WORK/cleanup-signals")" = TERM ]' \
+  "signal-immune Codex observes INT and TERM before forced cleanup"
+
+head_ "stub self-timeout"
+SECONDS=0
+STUB_MODE=self_timeout STUB_SELF_TIMEOUT_SECONDS=1 \
+  "$BIN" run "${run_args[@]}" --deadline 10 --runid lc-stub-timeout \
+  >"$WORK/stub-timeout.out" 2>"$WORK/stub-timeout.err"
+RC=$?
+ELAPSED=$SECONDS
+RD=$WORK/runs/lc-stub-timeout
+check '[ "$RC" = 21 ] && [ "$ELAPSED" -lt 3 ] &&
+       [ "$(text_ "$RD/status.json" verdict)" = NO_TERMINAL_EVENT ] &&
+       [ "$(text_ "$RD/status.json" process_exit_code)" = -9 ]' \
+  "the stub self-timeout kills an otherwise orphanable fixture"
 
 head_ "deadline wins over late terminal output"
 STUB_MODE=deadline_edge STUB_TERMINAL_DELAY=1.2 "$BIN" run "${run_args[@]}" \
@@ -255,6 +286,8 @@ check '[ "$(text_ "$RD/status.json" verdict)" = DEADLINE ] &&
 printf 'LATE TERMINAL OUTPUT' >"$WORK/edge.expected"
 check 'cmp -s "$WORK/edge.expected" "$RD/final.txt"' \
   "a captured message is kept as evidence without becoming a completion"
+
+check 'status_schemas_' "every lifecycle verdict fixture has exactly 16 status fields"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 exit $((FAIL > 0))

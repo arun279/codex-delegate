@@ -2,9 +2,24 @@
 # Offline stand-in for `codex`. It validates the exec argv and emits JSONL fixtures.
 set -uo pipefail
 
-live_catalog='{"models":[{"slug":"gpt-5.6-sol","priority":0,"default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}]},{"slug":"gpt-5.6-terra","priority":1,"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}]},{"slug":"codex-auto-review","priority":2,"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"}]}]}'
+live_catalog='{"models":[{"slug":"stub-model-a","priority":0,"default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}]},{"slug":"stub-model-b","priority":1,"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}]},{"slug":"stub-model-c","priority":2,"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"}]}]}'
 minimal_catalog='{"models":[{"slug":"minimal-model","supported_reasoning_levels":[{"effort":"bespoke"}]}]}'
 invalid_catalog='{"models":[{"slug":"minimal-model","supported_reasoning_levels":[{"effort":"bespoke"}]},{"slug":"broken-model","supported_reasoning_levels":[]}]}'
+
+STUB_SELF_TIMEOUT_SECONDS=${STUB_SELF_TIMEOUT_SECONDS:-900}
+STUB_SUBJECT_PID=$$
+(
+  elapsed=0
+  while [ "$elapsed" -lt "$STUB_SELF_TIMEOUT_SECONDS" ]; do
+    sleep 1
+    kill -0 "$STUB_SUBJECT_PID" 2>/dev/null || exit 0
+    elapsed=$((elapsed + 1))
+  done
+  kill -0 "$STUB_SUBJECT_PID" 2>/dev/null || exit 0
+  kill -KILL "$STUB_SUBJECT_PID" 2>/dev/null || true
+) </dev/null >/dev/null 2>&1 &
+STUB_WATCHDOG=$!
+trap 'kill "$STUB_WATCHDOG" 2>/dev/null || true' EXIT
 
 if [ "${1:-}" = debug ] && [ "${2:-}" = models ]; then
   case "${STUB_CATALOG_MODE:-live}" in
@@ -206,6 +221,16 @@ while time.monotonic() < until:
     trap '' INT TERM
     python3 -c 'import os; os.write(1, b"{\"type\":\"item.started\"}\n" * 4096)'
     emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    while :; do sleep 0.2; done
+    ;;
+  cleanup_ladder)
+    trap 'printf "INT\n" >>"$STUB_SIGNAL_CAPTURE"' INT
+    trap 'printf "TERM\n" >>"$STUB_SIGNAL_CAPTURE"' TERM
+    emit '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    printf 'CLEANUP LADDER OUTPUT\n' >"$OUT"
+    while :; do sleep 0.2; done
+    ;;
+  self_timeout)
     while :; do sleep 0.2; done
     ;;
   multi_message)

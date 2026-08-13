@@ -130,6 +130,7 @@ else
   run_step "security suite" bash tests/security.sh
   run_step "run suite" bash tests/run.sh
   run_step "lifecycle suite" bash tests/lifecycle.sh
+  run_step "runner handoff suite" bash tests/runner-handoff.sh
   run_step "release workflow suite" bash tests/release-workflow.sh
   export -f repository_push_invariants
   run_step "repository push" bash -c repository_push_invariants
