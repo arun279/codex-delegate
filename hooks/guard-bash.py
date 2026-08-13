@@ -22,9 +22,7 @@ from typing import Dict, List, Literal, Optional, Tuple, Union
 
 OVERRIDE_ENV = "CODEX_DELEGATE_GUARD_BASH_OVERRIDE"
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(\+?)=")
-SHELLS = frozenset(
-    {"bash", "csh", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "xonsh", "zsh"}
-)
+SHELLS = frozenset({"bash", "csh", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "xonsh", "zsh"})
 CODEX_PROGRAMS = frozenset(
     {
         "codex",
@@ -36,13 +34,9 @@ CODEX_PROGRAMS = frozenset(
     }
 )
 SERVER_PROGRAMS = CODEX_PROGRAMS - {"codex"}
-TURN_SUBCOMMANDS = frozenset(
-    {"exec", "review", "resume", "mcp", "mcp-server", "app-server", "proto"}
-)
+TURN_SUBCOMMANDS = frozenset({"exec", "review", "resume", "mcp", "mcp-server", "app-server", "proto"})
 VALID_SANDBOXES = frozenset({"read-only", "workspace-write", "danger-full-access"})
-WRAPPERS = frozenset(
-    {"caffeinate", "command", "env", "exec", "nice", "nohup", "setsid", "stdbuf", "sudo", "time"}
-)
+WRAPPERS = frozenset({"caffeinate", "command", "env", "exec", "nice", "nohup", "setsid", "stdbuf", "sudo", "time"})
 SEPARATORS = frozenset({"\n", ";", ";;", "&", "&&", "|", "||", "|&", "(", ")", "{", "}"})
 REDIRECTIONS = frozenset({"<", ">", "<<", "<<-", ">>", "<<<", "<>", ">&", "<&", ">|"})
 HOOK_COMMANDS = {
@@ -374,9 +368,7 @@ def _strip_heredoc_bodies(command: str) -> Optional[Tuple[str, List[Heredoc]]]:
                 index += 1
             if index >= len(lines):
                 return None
-            completed.append(
-                Heredoc(header, "".join(body), bool(re.search(r"<<-?\s*['\"]", header)))
-            )
+            completed.append(Heredoc(header, "".join(body), bool(re.search(r"<<-?\s*['\"]", header))))
         index += 1
     if not kept:
         return None
@@ -446,9 +438,7 @@ def _assignment(word: Word, variables: Variables) -> Optional[Tuple[str, Optiona
     return name, value
 
 
-def _local_command(
-    simple: SimpleCommand, variables: Variables
-) -> Tuple[Variables, Tuple[Word, ...], Dict[str, str]]:
+def _local_command(simple: SimpleCommand, variables: Variables) -> Tuple[Variables, Tuple[Word, ...], Dict[str, str]]:
     local = dict(variables)
     assigned: Dict[str, str] = {}
     index = 0
@@ -635,9 +625,7 @@ def _python_starts(code: str, variables: Variables, staged: Dict[str, str]) -> b
         tree = ast.parse(code)
     except (SyntaxError, ValueError):
         return False
-    shell_calls = frozenset(
-        {"os.system", "os.popen", "subprocess.getoutput", "subprocess.getstatusoutput"}
-    )
+    shell_calls = frozenset({"os.system", "os.popen", "subprocess.getoutput", "subprocess.getstatusoutput"})
     process_methods = frozenset({"run", "call", "check_call", "check_output", "Popen"})
     process_calls = {f"subprocess.{method}" for method in process_methods}
     for node in ast.walk(tree):
@@ -647,9 +635,7 @@ def _python_starts(code: str, variables: Variables, staged: Dict[str, str]) -> b
                     prefix = alias.asname or alias.name
                     process_calls.update(f"{prefix}.{method}" for method in process_methods)
         elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
-            process_calls.update(
-                alias.asname or alias.name for alias in node.names if alias.name in process_methods
-            )
+            process_calls.update(alias.asname or alias.name for alias in node.names if alias.name in process_methods)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -659,20 +645,11 @@ def _python_starts(code: str, variables: Variables, staged: Dict[str, str]) -> b
             if value is not None and _scan_shell(value, dict(variables), dict(staged)):
                 return True
         elif name in process_calls:
-            argument = (
-                node.args[0]
-                if node.args
-                else next(
-                    (keyword.value for keyword in node.keywords if keyword.arg == "args"), None
-                )
-            )
+            argument = node.args[0] if node.args else next((keyword.value for keyword in node.keywords if keyword.arg == "args"), None)
             if argument is None:
                 continue
             shell = any(
-                keyword.arg == "shell"
-                and isinstance(keyword.value, ast.Constant)
-                and keyword.value.value is True
-                for keyword in node.keywords
+                keyword.arg == "shell" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True for keyword in node.keywords
             )
             value = _static_node_string(argument)
             argv = _static_node_argv(argument)
@@ -683,18 +660,12 @@ def _python_starts(code: str, variables: Variables, staged: Dict[str, str]) -> b
         elif name in {"os.execl", "os.execlp"} and len(node.args) >= 2:
             program = _static_node_string(node.args[0])
             argv_values: List[Optional[str]] = [_static_node_string(item) for item in node.args[2:]]
-            if program is not None and _values_start(
-                [program, *argv_values], variables, staged, None
-            ):
+            if program is not None and _values_start([program, *argv_values], variables, staged, None):
                 return True
         elif name in {"os.execv", "os.execvp"} and len(node.args) >= 2:
             program = _static_node_string(node.args[0])
             argv = _static_node_argv(node.args[1])
-            if (
-                program is not None
-                and argv is not None
-                and _values_start([program, *argv[1:]], variables, staged, None)
-            ):
+            if program is not None and argv is not None and _values_start([program, *argv[1:]], variables, staged, None):
                 return True
     return False
 
@@ -800,9 +771,7 @@ def _values_start(
             if arg is None or not arg.startswith("-"):
                 break
             cursor += 1
-        return cursor + 1 < len(args) and _values_start(
-            args[cursor + 1 :], variables, staged, piped_code
-        )
+        return cursor + 1 < len(args) and _values_start(args[cursor + 1 :], variables, staged, piped_code)
     if name == "xargs":
         cursor = 0
         value_options = frozenset({"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"})
@@ -889,9 +858,7 @@ def _infer_output(source: str, variables: Variables) -> Optional[str]:
     return _static_output(commands[0], variables)
 
 
-def _scan_word_substitutions(
-    words: Sequence[Word], variables: Variables, staged: Dict[str, str]
-) -> bool:
+def _scan_word_substitutions(words: Sequence[Word], variables: Variables, staged: Dict[str, str]) -> bool:
     for word in words:
         for kind, body in word.parts:
             if kind == "command" and _scan_shell(body, dict(variables), dict(staged)):
@@ -919,9 +886,7 @@ def _scan_expansions(source: str, variables: Variables, staged: Dict[str, str]) 
     return False
 
 
-def _record_stage(
-    simple: SimpleCommand, output: Optional[str], variables: Variables, staged: Dict[str, str]
-) -> None:
+def _record_stage(simple: SimpleCommand, output: Optional[str], variables: Variables, staged: Dict[str, str]) -> None:
     if output is None:
         return
     for operator, word in simple.redirects:
@@ -966,9 +931,7 @@ def _inspect_simple(
         return True
     host = _program_name(values[0] if values else None)
     for name, value in assigned.items():
-        if host in HOOK_COMMANDS.get(name, frozenset()) and _scan_shell(
-            value, dict(local), dict(staged)
-        ):
+        if host in HOOK_COMMANDS.get(name, frozenset()) and _scan_shell(value, dict(local), dict(staged)):
             return True
     return False
 
@@ -985,10 +948,7 @@ def _heredoc_starts(heredoc: Heredoc, variables: Variables, staged: Dict[str, st
         if (
             effective is not None
             and _program_name(effective[0]) in SHELLS
-            and (
-                any(operator in ("<<", "<<-") for operator, _ in simple.redirects)
-                or simple.before in ("|", "|&")
-            )
+            and (any(operator in ("<<", "<<-") for operator, _ in simple.redirects) or simple.before in ("|", "|&"))
             and _scan_shell(heredoc.body, dict(local), dict(staged))
         ):
             return True

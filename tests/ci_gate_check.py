@@ -17,11 +17,7 @@ def main() -> int:
         print("ci-gate: FAIL: macos-release-gate job is missing", file=sys.stderr)
         return 1
     end = next(
-        (
-            index
-            for index in range(start, len(lines))
-            if lines[index].startswith("  ") and not lines[index].startswith("    ")
-        ),
+        (index for index in range(start, len(lines)) if lines[index].startswith("  ") and not lines[index].startswith("    ")),
         len(lines),
     )
     job = {line.strip() for line in lines[start:end]}

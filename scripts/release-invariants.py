@@ -46,17 +46,13 @@ DANGEROUS_DOTTED_CALLS = {"__import__", "eval", "exec"}
 DANGEROUS_MODULE_ROOTS = {"importlib", "runpy"}
 TRACKED_MODULE_ROOTS = {"builtins", "os", "sys"}
 DISCLOSURES = {
-    "PreToolUse hook scope": re.compile(
-        r"PreToolUse hooks.*Bash, Monitor, and Workflow", re.IGNORECASE
-    ),
+    "PreToolUse hook scope": re.compile(r"PreToolUse hooks.*Bash, Monitor, and Workflow", re.IGNORECASE),
     "PermissionRequest behavior": re.compile(r"PermissionRequest hook is inert", re.IGNORECASE),
     "OpenAI data egress": re.compile(r"prompts and files.*sent to OpenAI", re.IGNORECASE),
     "account-funded usage": re.compile(r"ChatGPT.*API-billed usage", re.IGNORECASE),
 }
 CHANGELOG_ENTRY = re.compile(r"^[-+*] ")
-CHANGELOG_EVIDENCE = re.compile(
-    r"^  <!-- evidence: (?P<path>[A-Za-z0-9_./-]+) :: (?P<needle>.+) -->$"
-)
+CHANGELOG_EVIDENCE = re.compile(r"^  <!-- evidence: (?P<path>[A-Za-z0-9_./-]+) :: (?P<needle>.+) -->$")
 CHANGELOG_SECTIONS = {"Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"}
 CHANGELOG_PRODUCT_SURFACE = (
     "bin/",
@@ -82,16 +78,8 @@ def assignment_bindings(target: ast.AST, value: ast.AST) -> list[tuple[str, ast.
     """Pair simple and structurally unpacked assignment names with their values."""
     if isinstance(target, ast.Name):
         return [(target.id, value)]
-    if (
-        isinstance(target, (ast.List, ast.Tuple))
-        and isinstance(value, (ast.List, ast.Tuple))
-        and len(target.elts) == len(value.elts)
-    ):
-        return [
-            binding
-            for target_item, value_item in zip(target.elts, value.elts)
-            for binding in assignment_bindings(target_item, value_item)
-        ]
+    if isinstance(target, (ast.List, ast.Tuple)) and isinstance(value, (ast.List, ast.Tuple)) and len(target.elts) == len(value.elts):
+        return [binding for target_item, value_item in zip(target.elts, value.elts) for binding in assignment_bindings(target_item, value_item)]
     return []
 
 
@@ -133,9 +121,7 @@ class DynamicEvalAnalyzer:
         if root == "builtins":
             return name is None or name in DANGEROUS_BUILTINS
         if root == "os":
-            return name is None or (
-                name.startswith(("exec", "spawn", "posix_spawn")) or name in {"popen", "system"}
-            )
+            return name is None or (name.startswith(("exec", "spawn", "posix_spawn")) or name in {"popen", "system"})
         return False
 
     def dangerous_reference(self, node: ast.AST) -> bool:
@@ -150,9 +136,7 @@ class DynamicEvalAnalyzer:
             function = node.func
             is_getattr = isinstance(function, ast.Name) and function.id == "getattr"
             if is_getattr:
-                return self.dangerous_attribute(
-                    self.module_path(node.args[0]), literal_string(node.args[1])
-                )
+                return self.dangerous_attribute(self.module_path(node.args[0]), literal_string(node.args[1]))
         return False
 
     def collect(self) -> None:
@@ -171,12 +155,7 @@ class DynamicEvalAnalyzer:
                     self.dangerous_import = True
                 for item in node.names:
                     local = item.asname or item.name
-                    if (
-                        root == "builtins"
-                        and item.name in DANGEROUS_BUILTINS
-                        or root == "os"
-                        and self.dangerous_attribute(root, item.name)
-                    ):
+                    if root == "builtins" and item.name in DANGEROUS_BUILTINS or root == "os" and self.dangerous_attribute(root, item.name):
                         self.callables.add(local)
             elif isinstance(node, ast.Assign):
                 for target in node.targets:
@@ -190,12 +169,7 @@ class DynamicEvalAnalyzer:
             for name, value in self.assignments:
                 dangerous = self.dangerous_reference(value)
                 module = self.module_path(value)
-                if (
-                    module is not None
-                    and module != name
-                    and not module.startswith(f"{name}.")
-                    and self.modules.get(name) != module
-                ):
+                if module is not None and module != name and not module.startswith(f"{name}.") and self.modules.get(name) != module:
                     self.modules[name] = module
                     changed = True
                 if dangerous and name not in self.callables:
@@ -207,10 +181,7 @@ class DynamicEvalAnalyzer:
     def found(self) -> bool:
         self.collect()
         self.resolve_aliases()
-        return self.dangerous_import or any(
-            isinstance(node, ast.Call) and self.dangerous_reference(node.func)
-            for node in ast.walk(self.tree)
-        )
+        return self.dangerous_import or any(isinstance(node, ast.Call) and self.dangerous_reference(node.func) for node in ast.walk(self.tree))
 
 
 def dynamic_eval_check(source: str) -> int:
@@ -283,9 +254,7 @@ def manifest_check() -> int:
     else:
         entries = []
         for index, raw_entry in enumerate(raw_entries):
-            if not isinstance(raw_entry, dict) or not all(
-                isinstance(key, str) for key in raw_entry
-            ):
+            if not isinstance(raw_entry, dict) or not all(isinstance(key, str) for key in raw_entry):
                 problems.append(f"plugins[{index}] must be an object")
                 continue
             entries.append(cast(dict[str, object], raw_entry))
@@ -315,9 +284,7 @@ def manifest_check() -> int:
             problems.append(f"plugin name {raw_label!r} does not match {NAME.pattern}")
         hidden(problems, f"{label} name", label)
         if "version" in entry:
-            problems.append(
-                f"{label} carries a version; plugin.json owns it and a disagreement warns"
-            )
+            problems.append(f"{label} carries a version; plugin.json owns it and a disagreement warns")
         source = entry.get("source")
         if not isinstance(source, (str, dict)):
             problems.append(f"{label} source must be a string or object")
@@ -328,16 +295,11 @@ def manifest_check() -> int:
                 if set(text) & META:
                     problems.append(f"{label} source {text!r} holds a shell metacharacter")
         if label == "codex-delegate" and source != "./":
-            problems.append(
-                "codex-delegate source must remain './' until an installable release asset exists, "
-                f"got {source!r}"
-            )
+            problems.append(f"codex-delegate source must remain './' until an installable release asset exists, got {source!r}")
         raw_description = entry.get("description", "")
         description = raw_description if isinstance(raw_description, str) else ""
         if not 10 <= len(description) <= 2000:
-            problems.append(
-                f"{label} description is {len(description)} characters, the range is 10 to 2000"
-            )
+            problems.append(f"{label} description is {len(description)} characters, the range is 10 to 2000")
         if description != description.strip():
             problems.append(f"{label} description has leading or trailing whitespace")
         if label == "codex-delegate":
@@ -347,9 +309,7 @@ def manifest_check() -> int:
     common_disclosures = {"OpenAI data egress", "account-funded usage"}
     for label, description, has_hooks in shipped_descriptions:
         for disclosure, pattern in DISCLOSURES.items():
-            if (has_hooks or disclosure in common_disclosures) and pattern.search(
-                description
-            ) is None:
+            if (has_hooks or disclosure in common_disclosures) and pattern.search(description) is None:
                 problems.append(f"{label} description omits {disclosure}")
 
     for problem in problems:
@@ -359,17 +319,8 @@ def manifest_check() -> int:
 
 def version_problems(package_version: object, plugin_version: object) -> list[str]:
     """Validate the shared package/plugin version and its SemVer syntax."""
-    if (
-        not isinstance(package_version, str)
-        or not isinstance(plugin_version, str)
-        or package_version != plugin_version
-    ):
-        return [
-            (
-                f"package.json version {package_version!r} does not match "
-                f"plugin.json version {plugin_version!r}"
-            )
-        ]
+    if not isinstance(package_version, str) or not isinstance(plugin_version, str) or package_version != plugin_version:
+        return [(f"package.json version {package_version!r} does not match plugin.json version {plugin_version!r}")]
     if not SEMVER.fullmatch(plugin_version):
         return [f"version {plugin_version!r} is not valid SemVer 2.0.0"]
     return []
@@ -417,11 +368,7 @@ def changelog_check() -> int:
     path = ROOT / "CHANGELOG.md"
     lines = path.read_text(encoding="utf-8").splitlines()
     problems: list[str] = []
-    headings = [
-        match.group(1)
-        for line in lines
-        if (match := re.fullmatch(r"## \[([^]]+)](?: - \d{4}-\d{2}-\d{2})?", line))
-    ]
+    headings = [match.group(1) for line in lines if (match := re.fullmatch(r"## \[([^]]+)](?: - \d{4}-\d{2}-\d{2})?", line))]
     if not headings or headings[0] != "Unreleased":
         problems.append("CHANGELOG.md must begin its release sections with [Unreleased]")
     if len(headings) != len(set(headings)):
@@ -441,12 +388,7 @@ def changelog_check() -> int:
             section = line.removeprefix("### ")
             if section not in CHANGELOG_SECTIONS:
                 problems.append(f"CHANGELOG.md:{index + 1} has unknown section {section!r}")
-        elif (
-            in_release_sections
-            and line
-            and CHANGELOG_ENTRY.match(line) is None
-            and CHANGELOG_EVIDENCE.fullmatch(line) is None
-        ):
+        elif in_release_sections and line and CHANGELOG_ENTRY.match(line) is None and CHANGELOG_EVIDENCE.fullmatch(line) is None:
             problems.append(f"CHANGELOG.md:{index + 1} has unstructured release-note content")
 
     for index, line in enumerate(lines):
@@ -464,17 +406,13 @@ def changelog_check() -> int:
             problems.append(f"CHANGELOG.md:{line_number} cites itself as evidence")
             continue
         if len(needle) < 20:
-            problems.append(
-                f"CHANGELOG.md:{line_number} evidence needle is too weak ({len(needle)} chars)"
-            )
+            problems.append(f"CHANGELOG.md:{line_number} evidence needle is too weak ({len(needle)} chars)")
             continue
         source = ROOT / relative
         try:
             source_text = source.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as error:
-            problems.append(
-                f"CHANGELOG.md:{line_number} cannot read evidence path {relative!r}: {error}"
-            )
+            problems.append(f"CHANGELOG.md:{line_number} cannot read evidence path {relative!r}: {error}")
             continue
         if needle not in source_text:
             problems.append(f"CHANGELOG.md:{line_number} claims {needle!r}, absent from {relative}")
@@ -544,9 +482,7 @@ def changelog_check() -> int:
                 text=True,
             ).stdout.splitlines()
             product_changed = any(
-                relative == surface or relative.startswith(surface)
-                for relative in changed
-                for surface in CHANGELOG_PRODUCT_SURFACE
+                relative == surface or relative.startswith(surface) for relative in changed for surface in CHANGELOG_PRODUCT_SURFACE
             )
             if product_changed:
                 prior = subprocess.run(  # noqa: S603 -- git is resolved from PATH above.
@@ -567,9 +503,7 @@ def changelog_check() -> int:
                     if CHANGELOG_ENTRY.match(line) is not None
                 }
                 if not current_entries - prior_entries:
-                    problems.append(
-                        f"product surface changed without a new CHANGELOG.md entry (base {base})"
-                    )
+                    problems.append(f"product surface changed without a new CHANGELOG.md entry (base {base})")
         except subprocess.CalledProcessError as error:
             detail = error.stderr.strip() if isinstance(error.stderr, str) else ""
             problems.append(f"cannot inspect the product diff from {base!r}: {detail or error}")
@@ -609,9 +543,7 @@ def publication_copy_check() -> int:
             continue
         for line_number, line in enumerate(lines, start=1):
             if match := TYPOGRAPHIC_DASH.search(line):
-                problems.append(
-                    f"{relative}:{line_number} contains typographic dash U+{ord(match.group()):04X}"
-                )
+                problems.append(f"{relative}:{line_number} contains typographic dash U+{ord(match.group()):04X}")
     for problem in problems:
         print(f"FAIL {problem}")
     if problems:
@@ -640,8 +572,7 @@ def main() -> int:
     if command == ["publication-copy"]:
         return publication_copy_check()
     print(
-        f"usage: {Path(sys.argv[0]).name} "
-        "[dynamic-eval|manifests|versions|release-versions|changelog|publication-copy]",
+        f"usage: {Path(sys.argv[0]).name} [dynamic-eval|manifests|versions|release-versions|changelog|publication-copy]",
         file=sys.stderr,
     )
     return 2

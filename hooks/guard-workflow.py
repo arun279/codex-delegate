@@ -18,10 +18,7 @@ GPT_AGENT = "codex-delegate:runner"
 LABEL_PREFIX = "codex:"
 FORBIDDEN = ("model", "effort", "tools")
 MAX_SCRIPT_BYTES = 2 * 1024 * 1024
-REAL_SIGNATURE = (
-    "agent(prompt: string, opts?: {label?, phase?, schema?, model?, effort?, "
-    "isolation?, agentType?})"
-)
+REAL_SIGNATURE = "agent(prompt: string, opts?: {label?, phase?, schema?, model?, effort?, isolation?, agentType?})"
 
 OPEN = {"(": ")", "[": "]", "{": "}"}
 CLOSE = {value: key for key, value in OPEN.items()}
@@ -151,9 +148,7 @@ def _pairs(tokens: list[Token]) -> dict[int, int] | None:
     return None if stack else pairs
 
 
-def _segments(
-    tokens: list[Token], start: int, end: int, pairs: dict[int, int]
-) -> list[tuple[int, int]]:
+def _segments(tokens: list[Token], start: int, end: int, pairs: dict[int, int]) -> list[tuple[int, int]]:
     segments: list[tuple[int, int]] = []
     segment_start = start
     index = start
@@ -170,9 +165,7 @@ def _segments(
     return segments
 
 
-def _object_bounds(
-    tokens: list[Token], segment: tuple[int, int], pairs: dict[int, int]
-) -> tuple[int, int] | None:
+def _object_bounds(tokens: list[Token], segment: tuple[int, int], pairs: dict[int, int]) -> tuple[int, int] | None:
     left, right = segment
     if left < right and tokens[left].value == "{" and pairs.get(left) == right - 1:
         return left, right - 1
@@ -185,9 +178,7 @@ def _property_key(token: Token) -> str | None:
     return None
 
 
-def _properties(
-    tokens: list[Token], opening: int, closing: int, pairs: dict[int, int]
-) -> tuple[list[Property], list[int]]:
+def _properties(tokens: list[Token], opening: int, closing: int, pairs: dict[int, int]) -> tuple[list[Property], list[int]]:
     properties: list[Property] = []
     opaque: list[int] = []
     segments = _segments(tokens, opening + 1, closing, pairs)
@@ -234,9 +225,7 @@ def _label_status(tokens: list[Token] | None) -> str:
     return "wrong"
 
 
-def _inspect_runner_object(
-    tokens: list[Token], opening: int, closing: int, pairs: dict[int, int]
-) -> ObjectCheck | None:
+def _inspect_runner_object(tokens: list[Token], opening: int, closing: int, pairs: dict[int, int]) -> ObjectCheck | None:
     properties, opaque = _properties(tokens, opening, closing, pairs)
     agent_types = [prop for prop in properties if prop.key == "agentType"]
     if not agent_types:
@@ -252,19 +241,14 @@ def _inspect_runner_object(
     label_issue: str | None = None
     if labels:
         label_property = labels[-1]
-        if (
-            not any(order > label_property.order for order in opaque)
-            and _label_status(label_property.value) == "wrong"
-        ):
+        if not any(order > label_property.order for order in opaque) and _label_status(label_property.value) == "wrong":
             label_issue = "wrong"
     elif not opaque:
         label_issue = "missing"
     return ObjectCheck(forbidden, label_issue)
 
 
-def _prompt_issue(
-    tokens: list[Token], segment: tuple[int, int], pairs: dict[int, int]
-) -> str | None:
+def _prompt_issue(tokens: list[Token], segment: tuple[int, int], pairs: dict[int, int]) -> str | None:
     left, right = segment
     if left >= right:
         return None
@@ -327,9 +311,7 @@ def lint_script(source: str) -> list[Violation]:
     for index, token in enumerate(tokens[:-1]):
         if token.kind != "word" or token.value != "agent" or tokens[index + 1].value != "(":
             continue
-        if index and (
-            tokens[index - 1].value == "." or tokens[index - 1].value in ("function", "new")
-        ):
+        if index and (tokens[index - 1].value == "." or tokens[index - 1].value in ("function", "new")):
             continue
         call_end = pairs.get(index + 1)
         if call_end is None:
@@ -360,10 +342,7 @@ def denial_reason(violations: list[Violation]) -> str:
         elif violation.label == "wrong":
             problems.append("change label so it starts with 'codex:' for the progress UI")
         details.append(f"line {violation.line}: {'; '.join(problems)}")
-    return (
-        "Blocked Workflow codex-delegate:runner agent() call. "
-        f"Real signature: {REAL_SIGNATURE}. " + " | ".join(details)
-    )
+    return f"Blocked Workflow codex-delegate:runner agent() call. Real signature: {REAL_SIGNATURE}. " + " | ".join(details)
 
 
 def _workflow_script(tool_input: object) -> str | None:

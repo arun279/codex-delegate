@@ -78,17 +78,11 @@ def launcher_surface(source: str) -> tuple[set[str], set[str], set[str], dict[st
                 flags.add(value)
             if node.func.attr == "add_parser" and value:
                 commands.add(value)
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "EXIT" for target in node.targets
-        ):
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "EXIT" for target in node.targets):
             raw = cast(object, ast.literal_eval(node.value))
             if not isinstance(raw, dict):
                 raise ValueError("EXIT is not a dictionary")
-            exits = {
-                key: item
-                for key, item in raw.items()
-                if isinstance(key, str) and isinstance(item, int) and not isinstance(item, bool)
-            }
+            exits = {key: item for key, item in raw.items() if isinstance(key, str) and isinstance(item, int) and not isinstance(item, bool)}
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef) or node.name != "status_for":
             continue
@@ -106,9 +100,7 @@ def launcher_surface(source: str) -> tuple[set[str], set[str], set[str], dict[st
 
 def launcher_constant(source: str, name: str) -> int:
     for node in ast.parse(source).body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == name for target in node.targets
-        ):
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
             value = cast(object, ast.literal_eval(node.value))
             if isinstance(value, int) and not isinstance(value, bool):
                 return value
@@ -148,11 +140,7 @@ def exception_return(source: str, function: str, exception: str) -> int | str:
 
 def function_return(source: str, function: str) -> int:
     target = next(
-        (
-            node
-            for node in ast.parse(source).body
-            if isinstance(node, ast.FunctionDef) and node.name == function
-        ),
+        (node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == function),
         None,
     )
     if target is None:
@@ -168,11 +156,7 @@ def function_return(source: str, function: str) -> int:
 
 def prompt_file_validation_precedes_allocation(source: str) -> bool:
     target = next(
-        (
-            node
-            for node in ast.parse(source).body
-            if isinstance(node, ast.FunctionDef) and node.name == "run"
-        ),
+        (node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == "run"),
         None,
     )
     if target is None:
@@ -188,15 +172,9 @@ def prompt_file_validation_precedes_allocation(source: str) -> bool:
         and node.args[1].value == "prompt file"
     ]
     allocation_lines = [
-        node.lineno
-        for node in ast.walk(target)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "allocate_run"
+        node.lineno for node in ast.walk(target) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "allocate_run"
     ]
-    return bool(
-        validation_lines and allocation_lines and max(validation_lines) < min(allocation_lines)
-    )
+    return bool(validation_lines and allocation_lines and max(validation_lines) < min(allocation_lines))
 
 
 def prompt_exit_contract(source: str, readme: str, exits: dict[str, int]) -> list[str]:
@@ -236,8 +214,7 @@ def runner_wait_contract(source: str, runner: str) -> list[str]:
         problems.append(f"the launcher no longer prints {STATUS_SEPARATOR!r} exactly once")
     if STATUS_SEPARATOR in runner:
         problems.append(
-            f"the runner keys on {STATUS_SEPARATOR!r}, which Codex can put in its own final "
-            "message and the launcher flushes ahead of the real status"
+            f"the runner keys on {STATUS_SEPARATOR!r}, which Codex can put in its own final message and the launcher flushes ahead of the real status"
         )
     blocks = BASH_BLOCK.findall(runner)
     if len(blocks) != 3:
@@ -259,23 +236,16 @@ def runner_wait_contract(source: str, runner: str) -> list[str]:
         problems.append("launcher has no fixed RUNNER_WAIT_SECONDS bound")
         return problems
     if bound >= BASH_DEFAULT_TIMEOUT_S:
-        problems.append(
-            f"runner-wait can take {bound}s and reach the {BASH_DEFAULT_TIMEOUT_S}s default"
-        )
+        problems.append(f"runner-wait can take {bound}s and reach the {BASH_DEFAULT_TIMEOUT_S}s default")
     if bound < MIN_RUNNER_WAIT_SECONDS:
-        problems.append(
-            f"runner-wait's {bound}s bound is below the measured {MIN_RUNNER_WAIT_SECONDS}s "
-            "turn-cost floor"
-        )
+        problems.append(f"runner-wait's {bound}s bound is below the measured {MIN_RUNNER_WAIT_SECONDS}s turn-cost floor")
     try:
         startup_bound = launcher_constant(source, "RUNNER_STARTUP_SECONDS")
     except ValueError:
         problems.append("launcher has no fixed pre-RUNID startup bound")
     else:
         if startup_bound >= bound:
-            problems.append(
-                f"pre-RUNID startup bound {startup_bound}s does not fit inside the {bound}s wait"
-            )
+            problems.append(f"pre-RUNID startup bound {startup_bound}s does not fit inside the {bound}s wait")
     reachable = launcher_constant(source, "MAX_DEADLINE")
     declared = int(turns.group(1))
     required = turns_needed(reachable, bound) + TURN_MARGIN
@@ -304,9 +274,7 @@ def dispatch_claims(runner: str, texts: dict[str, str]) -> list[str]:
     problems: list[str] = []
     for label, text in texts.items():
         for sentence in SENTENCE.findall(text):
-            claim = ONE_CALL.search(sentence) or (
-                BLOCKS.search(sentence) if DISPATCH.search(sentence) else None
-            )
+            claim = ONE_CALL.search(sentence) or (BLOCKS.search(sentence) if DISPATCH.search(sentence) else None)
             if claim is not None:
                 problems.append(
                     f"{label} calls dispatch {claim.group(0)!r} in "
@@ -354,9 +322,7 @@ def main() -> int:
         problems.append(f"launcher commands are {sorted(commands)}, expected run and models")
     internal_commands = set(re.findall(r'sys\.argv\[1:2\] == \["(runner-[a-z-]+)"\]', source))
     if internal_commands != {"runner-wait", "runner-report"}:
-        problems.append(
-            f"internal commands are {sorted(internal_commands)}, expected runner-wait/report"
-        )
+        problems.append(f"internal commands are {sorted(internal_commands)}, expected runner-wait/report")
     missing_flags = flags - documented_flags
     extra_flags = documented_flags - flags
     if missing_flags:
@@ -387,28 +353,18 @@ def main() -> int:
     published = {
         "package.json": listings["package.json"],
         ".claude-plugin/plugin.json": listings[".claude-plugin/plugin.json"],
-        **{
-            f".claude-plugin/marketplace.json plugins[{index}]": description
-            for index, description in enumerate(entries)
-        },
+        **{f".claude-plugin/marketplace.json plugins[{index}]": description for index, description in enumerate(entries)},
     }
     for label, description in published.items():
         if not description or len(description) > LISTING_LIMIT:
-            problems.append(
-                f"{label} description is not brief (1 through {LISTING_LIMIT} characters)"
-            )
+            problems.append(f"{label} description is not brief (1 through {LISTING_LIMIT} characters)")
         if "ChatGPT Codex allowance or API-billed usage" not in description:
             problems.append(f"{label} description omits the caller-paid quota disclosure")
         if "Prompts and files are sent to OpenAI." not in description:
             problems.append(f"{label} description omits the OpenAI data-egress disclosure")
         if not re.search(r"[Rr]equires macOS.*signed-in Codex CLI", description):
-            problems.append(
-                f"{label} description omits the macOS and signed-in Codex CLI prerequisites"
-            )
-        if any(
-            "cleanup" in sentence.lower() and "bounded" not in sentence.lower()
-            for sentence in SENTENCE.findall(description)
-        ):
+            problems.append(f"{label} description omits the macOS and signed-in Codex CLI prerequisites")
+        if any("cleanup" in sentence.lower() and "bounded" not in sentence.lower() for sentence in SENTENCE.findall(description)):
             problems.append(f"{label} claims cleanup without stating that it is bounded")
         if "tears that group down" in description or "CLEANUP_FAILED" not in description:
             problems.append(f"{label} published description claims teardown is unconditional")
@@ -418,10 +374,7 @@ def main() -> int:
             problems.append(f"{label} omits the PreToolUse hooks-read disclosure")
     plugin_description = published[".claude-plugin/plugin.json"]
     for label, description in published.items():
-        if (
-            label.startswith(".claude-plugin/marketplace.json")
-            and description != plugin_description
-        ):
+        if label.startswith(".claude-plugin/marketplace.json") and description != plugin_description:
             problems.append(f"{label} description differs from .claude-plugin/plugin.json")
     readme = documents[ROOT / "README.md"]
     skill = documents[ROOT / "skills" / "routing" / "SKILL.md"]
@@ -429,10 +382,7 @@ def main() -> int:
     status_reference = documents[ROOT / "skills" / "routing" / "reference" / "status-and-trust.md"]
     privacy = documents[ROOT / "PRIVACY.md"]
     for label, text in (("README.md", readme), ("PRIVACY.md", privacy)):
-        if not all(
-            claim in text
-            for claim in ("ChatGPT sign-in", "API-key sign-in", "consume", "independently")
-        ):
+        if not all(claim in text for claim in ("ChatGPT sign-in", "API-key sign-in", "consume", "independently")):
             problems.append(f"{label} omits the complete caller-paid quota disclosure")
     git_docs = {
         "README.md": readme,
@@ -466,9 +416,7 @@ def main() -> int:
         problems.append("hook documentation overstates malformed-call enforcement")
     for path in (ROOT / "README.md", ROOT / "skills" / "routing" / "SKILL.md"):
         if "exactly one terminal event" not in documents[path]:
-            problems.append(
-                f"{path.relative_to(ROOT)} omits duplicate-terminal STREAM_ERROR semantics"
-            )
+            problems.append(f"{path.relative_to(ROOT)} omits duplicate-terminal STREAM_ERROR semantics")
     if "SessionEnd" in hooks or (ROOT / "hooks" / "session-end.py").exists():
         problems.append("background session-end cleanup remains installed")
 
@@ -478,9 +426,7 @@ def main() -> int:
         return 1
     print("claim-check: extractor self-test PASS (literal argparse and status dictionaries)")
     print(
-        "claim-check: PASS: "
-        f"{len(commands)} commands, {len(flags)} flags, {len(status_fields)} status fields, "
-        f"and {len(exits)} fixed verdicts agree"
+        f"claim-check: PASS: {len(commands)} commands, {len(flags)} flags, {len(status_fields)} status fields, and {len(exits)} fixed verdicts agree"
     )
     return 0
 

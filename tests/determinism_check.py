@@ -84,16 +84,9 @@ def main() -> int:
     work = Path(sys.argv[1])
     count = int(sys.argv[2])
     statuses = [load_status(work / f"status-{number}.json") for number in range(1, count + 1)]
-    problems = [
-        problem
-        for number, status in enumerate(statuses, 1)
-        for problem in validate(status, number, work)
-    ]
+    problems = [problem for number, status in enumerate(statuses, 1) for problem in validate(status, number, work)]
     baseline = stable(statuses[0])
-    final_contents = [
-        (work / "runs" / f"determinism-{number:02d}" / "final.txt").read_bytes()
-        for number in range(1, count + 1)
-    ]
+    final_contents = [(work / "runs" / f"determinism-{number:02d}" / "final.txt").read_bytes() for number in range(1, count + 1)]
     for number, status in enumerate(statuses[1:], 2):
         if stable(status) != baseline:
             problems.append(f"run {number} changed a non-variable status field")
