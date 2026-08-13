@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import socketserver
@@ -96,7 +97,16 @@ def main() -> int:
         )
         / "git-http-backend"
     )
-    server = GitHTTPServer(("127.0.0.1", 0), GitHandler)
+    try:
+        server = GitHTTPServer(("127.0.0.1", 0), GitHandler)
+    except PermissionError as error:
+        if error.errno == errno.EPERM:
+            print(
+                "plugin-lifecycle-smarthttp: SKIP: sandbox denies loopback bind",
+                file=sys.stderr,
+            )
+            return 77
+        raise
     server.project_root = Path(sys.argv[1]).resolve()
     server.backend = backend
     Path(sys.argv[2]).write_text(f"{server.server_port}\n", encoding="ascii")
