@@ -22,6 +22,6 @@ class ForcedBindFailure:
         raise OSError(errno.EADDRINUSE, "Address already in use")
 
 
-setattr(module, "GitHTTPServer", ForcedBindFailure)
+module.__dict__["GitHTTPServer"] = ForcedBindFailure
 sys.argv = [path, ".", sys.argv[2]]
 raise SystemExit(module.main())
