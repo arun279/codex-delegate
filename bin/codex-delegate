@@ -301,12 +301,18 @@ def catalog(codex: str) -> list[Model]:
 
 
 def resolve_pair(
-    models: list[Model], requested_model: str | None, requested_effort: str | None
+    models: list[Model] | None, requested_model: str | None, requested_effort: str | None
 ) -> tuple[str, str]:
     if requested_model is not None and not TOKEN.fullmatch(requested_model):
         raise UserError("--model must contain only letters, digits, '.', '_', and '-'")
     if requested_effort is not None and not TOKEN.fullmatch(requested_effort):
         raise UserError("--effort must contain only letters, digits, '.', '_', and '-'")
+    if models is None:
+        if requested_model is None or requested_effort is None:
+            raise UserError(
+                "the model catalog is required unless --model and --effort are both set"
+            )
+        return requested_model, requested_effort
     if requested_model is None:
         visible = [model for model in models if model["visible"]]
         if not visible:
@@ -904,7 +910,7 @@ def status_for(
     }
 
 
-def run(args: Arguments, codex: str, models: list[Model]) -> int:
+def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
     if args.network and args.sandbox != "workspace-write":
         raise UserError("--network requires --sandbox workspace-write")
     cwd = canonical_dir(args.cwd, "--cwd")
@@ -1190,12 +1196,23 @@ def main() -> int:
     codex = shutil.which("codex")
     if codex is None:
         raise UserError("codex is not on PATH")
-    models = catalog(codex)
+    models: list[Model] | None
     if args.command == "models":
+        models = catalog(codex)
         print("slug\tdefault_effort\treasoning_efforts")
         for model in models:
             print(f"{model['slug']}\t{model['default']}\t{','.join(model['efforts'])}")
         return 0
+    try:
+        models = catalog(codex)
+    except UserError as error:
+        if args.model is None or args.effort is None:
+            raise
+        print(
+            f"{PROGRAM}: warning: {error}; proceeding with the caller's explicit pair unvalidated",
+            file=sys.stderr,
+        )
+        models = None
     return run(args, codex, models)
 
 

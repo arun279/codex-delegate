@@ -11,6 +11,7 @@
 # 0: a preflight that blocks the session is worse than anything it can find.
 
 problems=''
+minimum_codex_version=0.146.1
 
 # Two filesystem paths get interpolated. A backslash or a double quote in either would produce
 # JSON that the harness silently drops, taking the whole report with it.
@@ -39,6 +40,53 @@ fi
 # script cannot tell which of them owns codex on the machine it is running on.
 if ! command -v codex >/dev/null 2>&1; then
   add "codex is not on PATH, so no run can start. Install the Codex CLI from https://developers.openai.com/codex/cli/ and open a new session."
+else
+  # A watchdog in plain sh: the probe runs in the background against a temp file and is killed
+  # after its bound, so a hung codex cannot stall SessionStart and no extra runtime is required.
+  codex_version_status=125
+  codex_version_output=''
+  codex_version_file=$(mktemp 2>/dev/null) || codex_version_file=''
+  if [ -n "$codex_version_file" ]; then
+    codex --version >"$codex_version_file" 2>/dev/null &
+    codex_version_pid=$!
+    codex_version_status=124
+    codex_version_waited=0
+    while [ "$codex_version_waited" -lt 20 ]; do
+      if ! kill -0 "$codex_version_pid" 2>/dev/null; then
+        wait "$codex_version_pid"
+        codex_version_status=$?
+        break
+      fi
+      sleep 0.1
+      codex_version_waited=$((codex_version_waited + 1))
+    done
+    if [ "$codex_version_status" -eq 124 ]; then
+      kill "$codex_version_pid" 2>/dev/null
+      wait "$codex_version_pid" 2>/dev/null
+    fi
+    codex_version_output=$(cat "$codex_version_file" 2>/dev/null)
+    rm -f "$codex_version_file"
+  fi
+  if [ "$codex_version_status" -ne 0 ]; then
+    add "Note: codex --version did not answer successfully within the version probe bound; continuing preflight."
+  else
+    # A prerelease suffix (0.148.0-alpha.9) is a newer build, not an unrecognized one; the floor
+    # comparison uses the base version.
+    observed_codex_version=$(printf '%s\n' "$codex_version_output" | sed -n 's/^codex-cli \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)\(-[0-9A-Za-z.-][0-9A-Za-z.-]*\)\{0,1\}$/\1/p')
+    if [ -z "$observed_codex_version" ]; then
+      add "Note: codex --version returned an unrecognized version; continuing preflight."
+    elif awk -v observed="$observed_codex_version" -v required="$minimum_codex_version" 'BEGIN {
+      split(observed, actual, ".")
+      split(required, floor, ".")
+      for (part = 1; part <= 3; part++) {
+        if (actual[part] < floor[part]) exit 0
+        if (actual[part] > floor[part]) exit 1
+      }
+      exit 1
+    }'; then
+      add "Warning: Codex CLI version $observed_codex_version is below the required minimum $minimum_codex_version."
+    fi
+  fi
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then

@@ -94,6 +94,26 @@ STUB_CATALOG_MODE=fail "$BIN" models >"$WORK/models-fail.out" 2>&1
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "exit 75" "$WORK/models-fail.out"' \
   "an unavailable live catalog fails instead of degrading"
+STUB_CATALOG_MODE=fail STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" \
+  --sandbox read-only --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol \
+  --effort medium --runid catalog-fail-explicit \
+  >"$WORK/catalog-fail-explicit.out" 2>"$WORK/catalog-fail-explicit.err"
+RC=$?
+check '[ "$RC" = 0 ] && grep -q "exit 75" "$WORK/catalog-fail-explicit.err" &&
+       grep -q "explicit pair unvalidated" "$WORK/catalog-fail-explicit.err"' \
+  "an explicit pair proceeds with one warning when the catalog is unavailable"
+STUB_CATALOG_MODE=fail "$BIN" run --prompt-file "$WORK/prompt.txt" \
+  --sandbox read-only --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol \
+  >"$WORK/catalog-fail-no-effort.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "exit 75" "$WORK/catalog-fail-no-effort.out"' \
+  "an unavailable catalog still fails when effort is missing"
+STUB_CATALOG_MODE=fail "$BIN" run --prompt-file "$WORK/prompt.txt" \
+  --sandbox read-only --cwd "$WORK/job" --deadline 10 --effort medium \
+  >"$WORK/catalog-fail-no-model.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] && grep -q "exit 75" "$WORK/catalog-fail-no-model.out"' \
+  "an unavailable catalog still fails when model is missing"
 
 head_ "argument validation"
 "$BIN" run --prompt-file "$WORK/prompt.txt" >"$WORK/no-sandbox.out" 2>&1
