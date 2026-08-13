@@ -100,4 +100,4 @@ Before relaying a finding, read its cited code. After implementation, inspect th
 ## References
 
 - [Prompt construction](reference/prompting.md) covers self-contained tasks, exact verification, and interruption.
-- [Status and trust](reference/status-and-trust.md) defines all 16 fields and the writable-state boundary.
+- [Status and trust](reference/status-and-trust.md) defines all 17 fields and the writable-state boundary.

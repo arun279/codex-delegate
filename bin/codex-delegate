@@ -107,6 +107,7 @@ class Status(TypedDict):
     duration_s: float
     process_exit_code: int | None
     terminal_event: str | None
+    usage: dict[str, object] | None
     final_message_path: str | None
     events_path: str
     stderr_path: str
@@ -769,6 +770,7 @@ class Capture:
         self.terminal_at: float | None = None
         self.failure_message: str | None = None
         self.message: str | None = None
+        self.usage: dict[str, object] | None = None
 
     def mark_error(self, kind: str) -> None:
         if self.error is None:
@@ -801,7 +803,11 @@ class Capture:
             return
         self.terminal = kind
         self.terminal_at = time.monotonic()
-        if kind == "turn.failed":
+        if kind == "turn.completed":
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                self.usage = cast(dict[str, object], usage)
+        else:
             error = event.get("error")
             if isinstance(error, dict) and isinstance(error.get("message"), str):
                 self.failure_message = error["message"][:1000]
@@ -968,6 +974,7 @@ def status_for(
     duration: float,
     process_code: int | None,
     terminal: str | None,
+    usage: dict[str, object] | None = None,
 ) -> Status:
     final_path = context["final_path"]
     return {
@@ -984,6 +991,7 @@ def status_for(
         "duration_s": round(duration, 6),
         "process_exit_code": process_code,
         "terminal_event": terminal,
+        "usage": usage,
         "final_message_path": final_path if has_final_message(final_path) else None,
         "events_path": context["events_path"],
         "stderr_path": context["stderr_path"],
@@ -1222,6 +1230,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
         time.monotonic() - started_mono,
         process_code,
         capture.terminal,
+        capture.usage,
     )
     publish_result(root, final_path, status_path, status)
     return code

@@ -8,24 +8,8 @@ import sys
 from pathlib import Path
 from typing import cast
 
-EXPECTED_KEYS = {
-    "schema_version",
-    "runid",
-    "verdict",
-    "exit_code",
-    "diagnostic",
-    "signal",
-    "model",
-    "effort",
-    "sandbox",
-    "deadline_s",
-    "duration_s",
-    "process_exit_code",
-    "terminal_event",
-    "final_message_path",
-    "events_path",
-    "stderr_path",
-}
+from status_schema import EXPECTED
+
 PATH_FIELDS = ("final_message_path", "events_path", "stderr_path")
 VARIABLE_FIELDS = {"runid", "duration_s", *PATH_FIELDS}
 
@@ -40,8 +24,8 @@ def load_status(path: Path) -> dict[str, object]:
 def validate(status: dict[str, object], number: int, work: Path) -> list[str]:
     problems: list[str] = []
     runid = f"determinism-{number:02d}"
-    if set(status) != EXPECTED_KEYS:
-        problems.append(f"run {number} schema differs: {sorted(set(status) ^ EXPECTED_KEYS)}")
+    if set(status) != EXPECTED:
+        problems.append(f"run {number} schema differs: {sorted(set(status) ^ EXPECTED)}")
     expected = {
         "schema_version": 1,
         "runid": runid,
@@ -55,6 +39,13 @@ def validate(status: dict[str, object], number: int, work: Path) -> list[str]:
         "deadline_s": 60,
         "process_exit_code": 0,
         "terminal_event": "turn.completed",
+        "usage": {
+            "input_tokens": 101,
+            "cached_input_tokens": 80,
+            "cache_write_input_tokens": 7,
+            "output_tokens": 23,
+            "reasoning_output_tokens": 5,
+        },
     }
     for key, value in expected.items():
         if status.get(key) != value:

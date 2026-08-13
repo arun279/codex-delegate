@@ -366,8 +366,8 @@ def main() -> int:
     missing_status = status_fields - documented_status
     if missing_status:
         problems.append(f"status fields missing from docs: {sorted(missing_status)}")
-    if len(status_fields) != 16:
-        problems.append(f"launcher emits {len(status_fields)} status fields, expected 16")
+    if len(status_fields) != 17:
+        problems.append(f"launcher emits {len(status_fields)} status fields, expected 17")
     for flag in sorted(RETIRED_FLAGS):
         if flag in flags or f"`{flag}`" in joined:
             problems.append(f"retired flag remains: {flag}")

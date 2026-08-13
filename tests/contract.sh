@@ -153,8 +153,9 @@ check '! grep -Eq "codex-delegate (start|wait|status|reap)" $DOCS' \
   "retired subcommands are absent from user documentation"
 check '! grep -Eq "metadata_tampered|observed_pid_birth_ledger|survivors|terminal\.json|sentinel|catalog_degraded" $DOCS' \
   "retired status and attribution fields are absent"
-check 'grep -q "exactly 16 fields" "$README" && grep -q "exactly 16 fields" "$STATUS_REF"' \
-  "README and status reference agree on schema size"
+check 'grep -q "exactly 17 fields" "$README" && grep -q "exactly 17 fields" "$STATUS_REF" &&
+       grep -q "all 17 fields" "$SKILL"' \
+  "README, status reference, and routing skill agree on schema size"
 check 'GIT_DOCS_OK=1
        for doc in "$README" "$SECURITY" "$SKILL" "$STATUS_REF"; do
          grep -q -- "--add-dir" "$doc" && grep -q "Git metadata" "$doc" &&

@@ -1,4 +1,4 @@
-"""Check that status documents expose exactly the public 16-field schema."""
+"""Check that status documents expose exactly the public 17-field schema."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ EXPECTED = {
     "duration_s",
     "process_exit_code",
     "terminal_event",
+    "usage",
     "final_message_path",
     "events_path",
     "stderr_path",
