@@ -321,7 +321,7 @@
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t06 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-a --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
   },
   {
     "expect": "deny",
@@ -329,35 +329,35 @@
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t07 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-b --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t11 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-e --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t12 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-f --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t12 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x(x{})x\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-f --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x(x{})x\" </dev/null"
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t11 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-e --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x\" </dev/null"
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t08 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-c --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t08 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x(x)x$(x|x)x\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-c --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"x(x)x$(x|x)x\" </dev/null"
   },
   {
     "expect": "deny",
-    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/core-t10 --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
+    "command": "codex exec -C /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/feature-d --add-dir /fixture/home/Documents/projects/fixture-data/project-alpha -s workspace-write -o /tmp/codex-output.md \"$(cat /tmp/codex-prompt-input.md)\" </dev/null"
   },
   {
     "expect": "deny",
@@ -393,7 +393,7 @@
   },
   {
     "expect": "deny",
-    "command": "cd /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/platform && codex review --commit fea0681f067145714fa0b4f163ce713cb5ef88ef > /tmp/codex-review-t14.md 2>&1"
+    "command": "cd /private/tmp/fixture-session/-fixture-home-projects-project-alpha/session-id/fixture-data/worktrees/platform && codex review --commit fea0681f067145714fa0b4f163ce713cb5ef88ef > /tmp/codex-review-output.md 2>&1"
   },
   {
     "expect": "deny",
@@ -661,12 +661,12 @@
   },
   {
     "expect": "allow",
-    "command": "mv /fixture/other-home/repo/NOTES.md /fixture/home/.claude/projects/-fixture-other-home/codex-integration-redesign/NOTES.md",
+    "command": "mv /fixture/other-home/repo/NOTES.md /fixture/home/.claude/projects/-fixture-other-home/fixture-notes/NOTES.md",
     "source": "probe"
   },
   {
     "expect": "allow",
-    "command": "cp a.md /fixture/home/.claude/projects/-fixture-other-home/codex-integration-redesign/a.md",
+    "command": "cp a.md /fixture/home/.claude/projects/-fixture-other-home/fixture-notes/a.md",
     "source": "probe"
   },
   {
@@ -676,12 +676,12 @@
   },
   {
     "expect": "allow",
-    "command": "ls /fixture/home/.claude/projects/-fixture-other-home/codex-integration-redesign",
+    "command": "ls /fixture/home/.claude/projects/-fixture-other-home/fixture-notes",
     "source": "probe"
   },
   {
     "expect": "allow",
-    "command": "python3 -c \"import json;print(json.load(open('$B/j')))\"; ls /fixture/home/.claude/projects/-fixture-other-home/codex-integration-redesign",
+    "command": "python3 -c \"import json;print(json.load(open('$B/j')))\"; ls /fixture/home/.claude/projects/-fixture-other-home/fixture-notes",
     "source": "probe"
   },
   {

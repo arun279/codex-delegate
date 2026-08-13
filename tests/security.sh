@@ -1,5 +1,5 @@
 #!/bin/bash
-# Security boundaries that remain after deleting asynchronous recovery.
+# Security boundaries of the foreground blocking run.
 set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)

@@ -191,7 +191,7 @@ check 'gate_release_steps=true
   "release gate retains repository push, changelog evidence, and publication copy by name"
 check 'gate_analysis=true
        # The gate is the only place these run. Losing one silently removes a whole
-       # class of check while every suite stays green, which was measured.
+       # class of check while every suite stays green.
        for step in "ruff check" "ruff format" "ruff security" "mypy strict" \
          "Python dead code" "POSIX preflight shellcheck" "Bash shellcheck" \
          "shell format" "shell syntax" "Markdown lint" "document format" \

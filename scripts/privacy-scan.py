@@ -91,6 +91,31 @@ FORBIDDEN_RULES: tuple[RuleSpec, ...] = (
         "real-looking Unix account home",
         "direct",
     ),
+    # Development-process roles have no referent in this repository; shipped text that names one
+    # narrates how a change was produced rather than what it does.
+    RuleSpec(
+        "process-role-narrative",
+        (r"\borchest", r"rators?\b|\bgaunt", r"lets?\b"),
+        re.IGNORECASE,
+        "development-process narrative in shipped text",
+        "direct",
+    ),
+    # A numbered register entry points at a tracker that is not in this repository.
+    RuleSpec(
+        "private-register-item",
+        (r"\bitems? ", r"[0-9]{1,3}\b"),
+        re.IGNORECASE,
+        "reference to a private issue register",
+        "direct",
+    ),
+    # These document names belong to private working notes, not to this repository.
+    RuleSpec(
+        "private-document-name",
+        (r"\b(?:ISSUES|WORKLOG|HAND", r"OFF)\.md\b|\bSTANDING-INSTR", r"UCTIONS\b"),
+        0,
+        "reference to a private working document",
+        "direct",
+    ),
     # This extension identifier uniquely names a known private project.
     RuleSpec(
         "private-project-extension",
@@ -129,7 +154,7 @@ FORBIDDEN_RULES: tuple[RuleSpec, ...] = (
         "review finding heading beside a private project name",
         "work_product",
     ),
-    # This exact severity label came from the private review payloads.
+    # A severity label beside a private project name is private review work product.
     RuleSpec(
         "review-severity-medium",
         (r"\bMED", r"IUM\b"),
@@ -137,7 +162,7 @@ FORBIDDEN_RULES: tuple[RuleSpec, ...] = (
         "review severity beside a private project name",
         "work_product",
     ),
-    # This exact severity label came from the private review payloads.
+    # A severity label beside a private project name is private review work product.
     RuleSpec(
         "review-severity-high",
         (r"\bHI", r"GH(?=\s)"),
@@ -145,7 +170,7 @@ FORBIDDEN_RULES: tuple[RuleSpec, ...] = (
         "review severity beside a private project name",
         "work_product",
     ),
-    # Component-source suffixes helped identify the disclosed extension payload.
+    # Component source suffixes beside a private project name reveal private source files.
     RuleSpec(
         "component-source-suffix",
         (r"\.t", r"sx\b"),
@@ -153,7 +178,7 @@ FORBIDDEN_RULES: tuple[RuleSpec, ...] = (
         "component source path beside a private project name",
         "work_product",
     ),
-    # TypeScript file-and-line notation helped identify the disclosed review payload.
+    # TypeScript file-and-line notation beside a private project name reveals private source locations.
     RuleSpec(
         "typescript-location",
         (r"\.t", r"s:"),
@@ -161,7 +186,7 @@ FORBIDDEN_RULES: tuple[RuleSpec, ...] = (
         "source location beside a private project name",
         "work_product",
     ),
-    # The package-manager token was repeated throughout the disclosed task transcripts.
+    # A package-manager token beside a private project name reveals private tooling detail.
     RuleSpec(
         "package-manager-token",
         (r"\bp", r"npm\b"),
@@ -169,7 +194,7 @@ FORBIDDEN_RULES: tuple[RuleSpec, ...] = (
         "task tooling beside a private project name",
         "work_product",
     ),
-    # Review-role prose was a recurring signature of the private work product.
+    # Review-role prose beside a private project name is private work product.
     RuleSpec(
         "review-role-token",
         (r"\breview", r"er\b"),
@@ -177,7 +202,7 @@ FORBIDDEN_RULES: tuple[RuleSpec, ...] = (
         "review role beside a private project name",
         "work_product",
     ),
-    # The exact review status assignment was copied from private review output.
+    # A review status assignment beside a private project name is private review output.
     RuleSpec(
         "review-verdict-assignment",
         (r"\bVER", r"DICT="),

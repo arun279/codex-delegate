@@ -1,7 +1,7 @@
 #!/bin/bash
 # Regression cases for release checks whose former green result proved too little.
-# There is deliberately no embedded-Python line cap here. HEAD had no oversized block, and the
-# attempted replacement only recognized selected shell spellings, so its PASS result was unsound.
+# There is deliberately no embedded-Python line cap here: a cap that recognizes only some
+# shell spellings of an embedded block passes files it never inspected, worse than no cap.
 set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
