@@ -109,6 +109,7 @@ TUNABLES = {
         False,
         "run",
     ),
+    "FINAL_MESSAGE_PRINT_LIMIT": TunableSpec("CODEX_DELEGATE_FINAL_MESSAGE_PRINT_LIMIT", 20000, parse_integer, 1, 1024 * 1024 * 1024, False, "run"),
     "LINE_LIMIT": TunableSpec("CODEX_DELEGATE_LINE_LIMIT", 1024 * 1024, parse_integer, 256, 64 * 1024 * 1024, False, "run"),
     "READ_BATCH": TunableSpec("CODEX_DELEGATE_READ_BATCH", 32, parse_integer, 1, 4096, False, "run"),
     "TERMINAL_SETTLE_LIMIT_SECONDS": TunableSpec("CODEX_DELEGATE_TERMINAL_SETTLE_LIMIT_SECONDS", 2.5, parse_number, 0.0, 60.0, False, "run"),
@@ -224,6 +225,7 @@ class ResolvedTunables(NamedTuple):
     runner_wait_seconds: int
     runner_startup_seconds: int
     event_limit: int
+    final_message_print_limit: int
     line_limit: int
     read_batch: int
     terminal_settle_limit_seconds: float
@@ -261,6 +263,7 @@ def resolve_tunables(cli_values: dict[str, str | None], active: frozenset[str]) 
         cast(int, resolved["RUNNER_WAIT_SECONDS"]),
         cast(int, resolved["RUNNER_STARTUP_SECONDS"]),
         cast(int, resolved["EVENT_LIMIT"]),
+        cast(int, resolved["FINAL_MESSAGE_PRINT_LIMIT"]),
         cast(int, resolved["LINE_LIMIT"]),
         cast(int, resolved["READ_BATCH"]),
         cast(float, resolved["TERMINAL_SETTLE_LIMIT_SECONDS"]),
@@ -1037,17 +1040,28 @@ def discard_stdout_error() -> None:
         pass
 
 
-def print_result(final_path: str, status: Status) -> None:
+def print_result(final_path: str, status: Status, final_message_print_limit: int) -> None:
     if sys.stdout is None:
         return
     try:
         print(f"\n--- FINAL MESSAGE ({final_path}) ---", flush=True)
         if status["final_message_path"]:
             with open(final_path, "rb") as final:
-                final.seek(-1, os.SEEK_END)
-                ends_with_newline = final.read(1) == b"\n"
-                final.seek(0)
-                shutil.copyfileobj(final, sys.stdout.buffer)
+                message_size = os.fstat(final.fileno()).st_size
+                if message_size <= final_message_print_limit:
+                    final.seek(-1, os.SEEK_END)
+                    ends_with_newline = final.read(1) == b"\n"
+                    final.seek(0)
+                    shutil.copyfileobj(final, sys.stdout.buffer)
+                else:
+                    prefix = final.read(final_message_print_limit)
+                    sys.stdout.buffer.write(prefix)
+                    if not prefix.endswith(b"\n"):
+                        sys.stdout.buffer.write(b"\n")
+                    omitted = message_size - len(prefix)
+                    marker = f"--- FINAL MESSAGE TRUNCATED: {omitted} bytes omitted; complete artifact: {final_path} ---\n"
+                    sys.stdout.buffer.write(marker.encode())
+                    ends_with_newline = True
             sys.stdout.buffer.flush()
             if not ends_with_newline:
                 print()
@@ -1060,9 +1074,9 @@ def print_result(final_path: str, status: Status) -> None:
         discard_stdout_error()
 
 
-def publish_result(root: str, final_path: str, status_path: str, status: Status, keep_limit: int) -> None:
+def publish_result(root: str, final_path: str, status_path: str, status: Status, keep_limit: int, final_message_print_limit: int) -> None:
     atomic_status(status_path, status)
-    print_result(final_path, status)
+    print_result(final_path, status, final_message_print_limit)
     prune_runs(root, retention_limit(keep_limit))
 
 
@@ -1159,7 +1173,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
             None,
             None,
         )
-        publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
+        publish_result(root, final_path, status_path, status, tunables.run_keep_limit, tunables.final_message_print_limit)
         return 128 + error.number
     except PromptDeadline:
         status = status_for(
@@ -1172,7 +1186,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
             None,
             None,
         )
-        publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
+        publish_result(root, final_path, status_path, status, tunables.run_keep_limit, tunables.final_message_print_limit)
         return EXIT["DEADLINE"]
     except UserError as error:
         print(f"{PROGRAM}: {error}", file=sys.stderr)
@@ -1186,7 +1200,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
             None,
             None,
         )
-        publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
+        publish_result(root, final_path, status_path, status, tunables.run_keep_limit, tunables.final_message_print_limit)
         return EXIT["LAUNCH_ERROR"]
 
     command = codex_argv(codex, args, model, effort, final_path, cwd, add_dirs, schema)
@@ -1219,7 +1233,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
                 None,
                 None,
             )
-            publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
+            publish_result(root, final_path, status_path, status, tunables.run_keep_limit, tunables.final_message_print_limit)
             return EXIT["LAUNCH_ERROR"]
 
         fd = cast(BinaryIO, process.stdout).fileno()
@@ -1329,7 +1343,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
         capture.terminal,
         capture.usage,
     )
-    publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
+    publish_result(root, final_path, status_path, status, tunables.run_keep_limit, tunables.final_message_print_limit)
     return code
 
 

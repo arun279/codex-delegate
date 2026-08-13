@@ -64,7 +64,7 @@ await agent(
 );
 ```
 
-Both markers, a non-empty prompt body, an explicit `--sandbox`, and a deadline from 1 through 12,960 are required by the runner instructions. Put Codex `--model` and `--effort` flags in `===ARGS===`, not in the Workflow options object. The call resolves once: there is no Bash or Workflow timeout to choose and no waiter to write. The launcher mints the runner's run ID. The runner then uses launcher-owned wait and report commands; each wait returns below Bash's default timeout. Before the run ID exists, a dead launcher PID or a 60-second startup grace ends the wait. Afterward, the PID-file lock remains authoritative until the kernel releases it at launcher exit. What comes back is the launcher's output with only handoff records removed, or diagnostic output ending in a `codex-delegate:` line when no status result exists.
+Both markers, a non-empty prompt body, an explicit `--sandbox`, and a deadline from 1 through 12,960 are required by the runner instructions. Put Codex `--model` and `--effort` flags in `===ARGS===`, not in the Workflow options object. The call resolves once: there is no Bash or Workflow timeout to choose and no waiter to write. The launcher mints the runner's run ID. The runner then uses launcher-owned wait and report commands; each wait returns below Bash's default timeout. Before the run ID exists, a dead launcher PID or a 60-second startup grace ends the wait. Afterward, the PID-file lock remains authoritative until the kernel releases it at launcher exit. What comes back is the launcher's output, byte-exact within the printed final-message budget and with only handoff records removed, or diagnostic output ending in a `codex-delegate:` line when no status result exists. The named `final.txt` artifact is the complete final-message record.
 
 ## From a terminal
 
@@ -85,6 +85,8 @@ Use `--prompt-stdin` when the prompt arrives on standard input. `run` blocks unt
 --- STATUS ---
 <status JSON>
 ```
+
+The launcher prints at most 20,000 final-message bytes by default. When it omits bytes, a marker after the printed prefix gives the exact omitted count and repeats the complete artifact's path. The status block always follows in full. A message at or below the budget prints byte-for-byte as before, while `final.txt` always retains the complete bytes.
 
 `codex-delegate models` prints the live model slugs, each default effort, and every supported effort. There is no bundled fallback. An unavailable or invalid catalog fails plainly. Omitted `--model` and `--effort` flags use live-catalog defaults; supplied values must form a supported pair.
 
@@ -113,6 +115,7 @@ The command-line flag wins over its environment variable, which wins over the ha
 | `CODEX_DELEGATE_RUNNER_WAIT_SECONDS` | 110 seconds | 110-119 seconds |
 | `CODEX_DELEGATE_RUNNER_STARTUP_SECONDS` | 60 seconds | 1-118 seconds; less than runner wait |
 | `CODEX_DELEGATE_EVENT_LIMIT` | 16,777,216 bytes | 1,024-1,073,741,824 bytes |
+| `CODEX_DELEGATE_FINAL_MESSAGE_PRINT_LIMIT` | 20,000 bytes | 1-1,073,741,824 bytes |
 | `CODEX_DELEGATE_LINE_LIMIT` | 1,048,576 bytes | 256-67,108,864 bytes |
 | `CODEX_DELEGATE_READ_BATCH` | 32 reads | 1-4,096 reads |
 | `CODEX_DELEGATE_TERMINAL_SETTLE_LIMIT_SECONDS` | 2.5 seconds | 0-60 seconds |

@@ -372,6 +372,84 @@ check '[ "$(json_ "$RD/status.json" terminal_event)" = '"'"'"turn.completed"'"'"
 check 'python3 -c '"'"'import json,sys; expected={"input_tokens":101,"cached_input_tokens":80,"cache_write_input_tokens":7,"output_tokens":23,"reasoning_output_tokens":5}; raise SystemExit(json.load(open(sys.argv[1]))["usage"] != expected)'"'"' "$RD/status.json"' \
   "Codex CLI usage counters pass through unchanged"
 
+CAP_BIN=$WORK/cap-bin
+mkdir "$CAP_BIN"
+cat >"$CAP_BIN/codex" <<'STUB'
+#!/bin/bash
+set -uo pipefail
+OUT=""
+PREVIOUS=""
+for ARG in "$@"; do
+  if [ "$PREVIOUS" = -o ]; then
+    OUT=$ARG
+    break
+  fi
+  PREVIOUS=$ARG
+done
+"$CAP_REAL_CODEX" "$@"
+RC=$?
+if [ "$RC" = 0 ] && [ -n "$OUT" ] && [ -n "${STUB_FINAL_BYTES:-}" ]; then
+  python3 -c 'import sys; open(sys.argv[1], "wb").write(b"A" * int(sys.argv[2]))' "$OUT" "$STUB_FINAL_BYTES"
+fi
+exit "$RC"
+STUB
+chmod 700 "$CAP_BIN/codex"
+export CAP_REAL_CODEX=$ROOT/tests/stub/codex
+
+PATH=$CAP_BIN:/usr/bin:/bin:/usr/sbin:/sbin STUB_MODE=ok STUB_FINAL_BYTES=20005 \
+  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model stub-model-a --effort medium --runid final-cap-default \
+  >"$WORK/final-cap-default.out" 2>"$WORK/final-cap-default.err"
+RC=$?
+CAP_RD=$WORK/runs/final-cap-default
+check '[ "$RC" = 0 ] && python3 -c '"'"'import sys
+output=open(sys.argv[1], "rb").read(); artifact=sys.argv[2]
+header=f"\n--- FINAL MESSAGE ({artifact}) ---\n".encode()
+marker=f"\n--- FINAL MESSAGE TRUNCATED: 5 bytes omitted; complete artifact: {artifact} ---\n".encode()
+raise SystemExit(not output.startswith(header + b"A" * 20000 + marker))'"'"' "$WORK/final-cap-default.out" "$CAP_RD/final.txt"' \
+  "an over-budget final message prints the bounded head and exact omission marker"
+check 'python3 -c '"'"'import json,sys
+output=open(sys.argv[1], "rb").read(); encoded=output.rsplit(b"\n--- STATUS ---\n", 1)[1]
+status=json.loads(encoded); stored=open(sys.argv[2], "rb").read()
+raise SystemExit(status["verdict"] != "COMPLETED" or encoded != stored)'"'"' "$WORK/final-cap-default.out" "$CAP_RD/status.json"' \
+  "a capped final message leaves complete parseable status JSON"
+check 'python3 -c '"'"'import sys
+data=open(sys.argv[1], "rb").read(); raise SystemExit(data != b"A" * 20005)'"'"' "$CAP_RD/final.txt"' \
+  "a capped print leaves the complete artifact bytes intact"
+
+PATH=$CAP_BIN:/usr/bin:/bin:/usr/sbin:/sbin STUB_MODE=ok STUB_FINAL_BYTES=20000 \
+  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model stub-model-a --effort medium --runid final-cap-exact \
+  >"$WORK/final-cap-exact.out" 2>"$WORK/final-cap-exact.err"
+RC=$?
+EXACT_RD=$WORK/runs/final-cap-exact
+check '[ "$RC" = 0 ] && ! grep -q "FINAL MESSAGE TRUNCATED" "$WORK/final-cap-exact.out" &&
+       python3 -c '"'"'import sys
+output=open(sys.argv[1], "rb").read(); artifact=sys.argv[2]
+header=f"\n--- FINAL MESSAGE ({artifact}) ---\n".encode()
+raise SystemExit(not output.startswith(header + b"A" * 20000 + b"\n\n--- STATUS ---\n"))'"'"' "$WORK/final-cap-exact.out" "$EXACT_RD/final.txt"' \
+  "a final message exactly at the budget prints in full without a marker"
+check 'python3 -c '"'"'import sys
+data=open(sys.argv[1], "rb").read(); raise SystemExit(data != b"A" * 20000)'"'"' "$EXACT_RD/final.txt"' \
+  "an exactly-budgeted print leaves the complete artifact bytes intact"
+
+CODEX_DELEGATE_FINAL_MESSAGE_PRINT_LIMIT=7 PATH=$CAP_BIN:/usr/bin:/bin:/usr/sbin:/sbin \
+  STUB_MODE=ok STUB_FINAL_BYTES=25 "$BIN" run --prompt-file "$WORK/prompt.txt" \
+  --sandbox read-only --cwd "$WORK/job" --deadline 10 --model stub-model-a \
+  --effort medium --runid final-cap-environment >"$WORK/final-cap-environment.out" \
+  2>"$WORK/final-cap-environment.err"
+RC=$?
+ENV_CAP_RD=$WORK/runs/final-cap-environment
+check '[ "$RC" = 0 ] && python3 -c '"'"'import sys
+output=open(sys.argv[1], "rb").read(); artifact=sys.argv[2]
+header=f"\n--- FINAL MESSAGE ({artifact}) ---\n".encode()
+marker=f"\n--- FINAL MESSAGE TRUNCATED: 18 bytes omitted; complete artifact: {artifact} ---\n".encode()
+raise SystemExit(not output.startswith(header + b"A" * 7 + marker))'"'"' "$WORK/final-cap-environment.out" "$ENV_CAP_RD/final.txt"' \
+  "the final-message print budget responds to its environment variable"
+check 'python3 -c '"'"'import sys
+data=open(sys.argv[1], "rb").read(); raise SystemExit(data != b"A" * 25)'"'"' "$ENV_CAP_RD/final.txt"' \
+  "an environment-capped print leaves the complete artifact bytes intact"
+
 run_case missing_usage missing-usage 0
 check '[ "$(json_ "$WORK/runs/missing-usage/status.json" usage)" = null ]' \
   "a completed event without usage publishes null"

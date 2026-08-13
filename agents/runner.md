@@ -42,7 +42,7 @@ codex-delegate runner-wait "<OUTPUT_FILE>"
 
 Repeat that exact call on `RUNNING`, and repeat a call the harness itself cut short. Only `ENDED` moves on. Before run-ID publication, definitive PID death or expiry of the no-PID startup grace produces `ENDED`. After publication, the kernel releases the PID-file lock when the original launcher exits, including on `SIGKILL`, so PID reuse cannot redirect the wait.
 
-Then make this exact one-line call once and return exactly what it prints. It removes only launcher-owned handoff records and otherwise preserves the completed harness output byte for byte.
+Then make this exact one-line call once and return exactly what it prints. It removes only launcher-owned handoff records and otherwise preserves the completed harness output byte for byte within the launcher's printed final-message budget. If the launcher prints an omission marker, the `final.txt` artifact path repeated there names the complete final-message record.
 
 ```bash
 codex-delegate runner-report "<OUTPUT_FILE>"

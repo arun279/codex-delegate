@@ -80,7 +80,7 @@ By default, `workspace-write` protects `.git` and the resolved Git directory of 
 
 ## Read the verdict
 
-The runner returns the final-message section followed by status. Read `verdict`, `exit_code`, and `diagnostic`, then inspect the requested artifacts or diff before reporting success. A return with no status block is not a result: the preceding text can be a kickoff error or partial launcher output. A trailing `codex-delegate:` line supplies launcher context for that failed run.
+The runner returns the final-message section followed by status. Within the launcher's printed byte budget that section is relayed byte-exactly; an omission marker gives the omitted byte count and repeats the `final.txt` path, which is the complete final-message record. Status always follows the marker in full. Read `verdict`, `exit_code`, and `diagnostic`, then inspect the requested artifacts or diff before reporting success. A return with no status block is not a result: the preceding text can be a kickoff error or partial launcher output. A trailing `codex-delegate:` line supplies launcher context for that failed run.
 
 | verdict | meaning |
 | --- | --- |
