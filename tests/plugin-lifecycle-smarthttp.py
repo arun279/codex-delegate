@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socketserver
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -65,6 +66,15 @@ class GitHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     project_root: Path
     backend: Path
+
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind resolves the bound address with socket.getfqdn(), a reverse-DNS
+        # lookup that can hang for tens of seconds on hosted CI runners, outliving the caller's
+        # wait for the port file. The server only ever serves loopback, so bind without it.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
 
 
 def main() -> int:

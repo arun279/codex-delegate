@@ -41,8 +41,10 @@ check() {
   fi
 }
 wait_file() {
+  # 500 x 0.02s allows ten nominal seconds: hosted runners start interpreters noticeably
+  # slower than a developer machine, and the wait is on the port file, not on a request.
   local path=$1 attempt=0
-  while [ ! -s "$path" ] && [ "$attempt" -lt 200 ]; do
+  while [ ! -s "$path" ] && [ "$attempt" -lt 500 ]; do
     attempt=$((attempt + 1))
     sleep 0.02
   done
