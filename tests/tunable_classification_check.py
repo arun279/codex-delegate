@@ -4,14 +4,14 @@
 import ast
 import sys
 
-tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+with open(sys.argv[1], encoding="utf-8") as source:
+    tree = ast.parse(source.read())
 
 
 def assigned(name: str) -> ast.expr:
     for statement in tree.body:
-        if isinstance(statement, ast.Assign):
-            if any(isinstance(target, ast.Name) and target.id == name for target in statement.targets):
-                return statement.value
+        if isinstance(statement, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in statement.targets):
+            return statement.value
     raise SystemExit(f"missing classification declaration: {name}")
 
 
