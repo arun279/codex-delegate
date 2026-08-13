@@ -214,10 +214,7 @@ def check_protocol(launcher: str, wait: str, report: str, work: Path) -> list[st
         timeout=10,
         check=False,
     )
-    if (
-        refusal.returncode != 2
-        or "--runner-handoff cannot be combined with --runid" not in refusal.stderr
-    ):
+    if refusal.returncode != 2 or "--runner-handoff cannot be combined with --runid" not in refusal.stderr:
         problems.append("launcher accepted --runner-handoff combined with --runid")
 
     (run_root / "runner-a1b2c3d4e5f6a7b8").mkdir()
@@ -235,35 +232,20 @@ def check_protocol(launcher: str, wait: str, report: str, work: Path) -> list[st
         problems.append("completed runner-wait did not return ENDED")
     report_script = fill(report, "report", {"<OUTPUT_FILE>": str(success_output)})
     report_result = bash(report_script, env)
-    if report_result.returncode != 0 or report_result.stdout.encode() != without_records(
-        success_output
-    ):
+    if report_result.returncode != 0 or report_result.stdout.encode() != without_records(success_output):
         problems.append("runner-report did not preserve completed launcher output byte for byte")
 
     no_end_output = work / "complete-without-end.out"
     success_lines = success_output.read_bytes().splitlines(keepends=True)
-    no_end_output.write_bytes(
-        b"".join(line for line in success_lines if not END_RECORD.fullmatch(line))
-    )
+    no_end_output.write_bytes(b"".join(line for line in success_lines if not END_RECORD.fullmatch(line)))
     no_end_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(no_end_output)}), env)
-    if (
-        no_end_report.returncode != 0
-        or no_end_report.stdout.encode() != without_records(no_end_output)
-        or "no result" in no_end_report.stdout
-    ):
-        problems.append(
-            "a complete result without the end record became a contradictory no-result report"
-        )
+    if no_end_report.returncode != 0 or no_end_report.stdout.encode() != without_records(no_end_output) or "no result" in no_end_report.stdout:
+        problems.append("a complete result without the end record became a contradictory no-result report")
 
     missing_runid = "runner-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     missing_no_end_output = work / "missing-without-end.out"
-    missing_no_end_output.write_text(
-        f"CODEX_DELEGATE_LAUNCHER_PID=1\nCODEX_DELEGATE_RUNID={missing_runid}\n"
-        "truncated launcher output\n"
-    )
-    missing_no_end_report = bash(
-        fill(report, "report", {"<OUTPUT_FILE>": str(missing_no_end_output)}), env
-    )
+    missing_no_end_output.write_text(f"CODEX_DELEGATE_LAUNCHER_PID=1\nCODEX_DELEGATE_RUNID={missing_runid}\ntruncated launcher output\n")
+    missing_no_end_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(missing_no_end_output)}), env)
     if (
         missing_no_end_report.returncode != 0
         or "truncated launcher output" not in missing_no_end_report.stdout
@@ -329,21 +311,14 @@ def check_protocol(launcher: str, wait: str, report: str, work: Path) -> list[st
         )
         time.sleep(2)
         if waiter.poll() is not None:
-            problems.append(
-                "runner-wait trusted an output marker while the launcher still held its PID lock"
-            )
+            problems.append("runner-wait trusted an output marker while the launcher still held its PID lock")
         os.kill(live_pid, signal.SIGKILL)
         live.wait(timeout=10)
         waiter_stdout, waiter_stderr = waiter.communicate(timeout=10)
         if waiter.returncode != 0 or waiter_stdout.strip() != "ENDED":
-            problems.append(
-                f"runner-wait did not survive SIGKILL: {waiter_stdout!r} {waiter_stderr!r}"
-            )
+            problems.append(f"runner-wait did not survive SIGKILL: {waiter_stdout!r} {waiter_stderr!r}")
         killed_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(live_output)}), env)
-        if (
-            killed_report.returncode != 0
-            or "launcher ended before it could report" not in killed_report.stdout
-        ):
+        if killed_report.returncode != 0 or "launcher ended before it could report" not in killed_report.stdout:
             problems.append("runner-report did not diagnose a killed launcher with no result")
     finally:
         if waiter is not None and waiter.poll() is None:
@@ -397,9 +372,7 @@ def check_protocol(launcher: str, wait: str, report: str, work: Path) -> list[st
         for label, process in unresolved:
             if process.poll() is not None:
                 stdout, stderr = process.communicate()
-                problems.append(
-                    f"{label} runner output ended before its startup grace: {stdout!r} {stderr!r}"
-                )
+                problems.append(f"{label} runner output ended before its startup grace: {stdout!r} {stderr!r}")
     finally:
         for _, process in unresolved:
             if process.poll() is None:
@@ -426,23 +399,14 @@ def check_protocol(launcher: str, wait: str, report: str, work: Path) -> list[st
     ):
         result = bash(fill(report, "report", {"<OUTPUT_FILE>": str(path)}), env)
         lines = result.stdout.splitlines()
-        if (
-            result.returncode != 0
-            or len(lines) != 1
-            or not lines[0].startswith("codex-delegate:")
-            or "Traceback" in result.stderr
-        ):
+        if result.returncode != 0 or len(lines) != 1 or not lines[0].startswith("codex-delegate:") or "Traceback" in result.stderr:
             problems.append(f"{label} report input does not return one no-result diagnostic")
     unreadable_output.chmod(0o600)
 
     no_command_output = work / "no-command.out"
     no_command_output.write_text("bash: codex-delegate: command not found\n", encoding="ascii")
     no_command_report = bash(fill(report, "report", {"<OUTPUT_FILE>": str(no_command_output)}), env)
-    if (
-        no_command_report.returncode != 0
-        or "command not found" not in no_command_report.stdout
-        or "codex-delegate:" not in no_command_report.stdout
-    ):
+    if no_command_report.returncode != 0 or "command not found" not in no_command_report.stdout or "codex-delegate:" not in no_command_report.stdout:
         problems.append("a failed kickoff did not preserve its diagnostic and add launcher context")
     return problems
 

@@ -320,9 +320,7 @@ def read_git_objects(root: Path, object_ids: Sequence[bytes]) -> dict[bytes, Git
         offset = end + 1
         kind = object_type.decode("ascii", errors="replace")
         if actual_oid != requested_oid:
-            raise ScanError(
-                f"git cat-file returned {actual_oid!r} when {requested_oid!r} was requested"
-            )
+            raise ScanError(f"git cat-file returned {actual_oid!r} when {requested_oid!r} was requested")
         objects[requested_oid] = GitObject(requested_oid, kind, data)
     if offset != len(output):
         raise ScanError("git cat-file returned unexpected trailing data")
@@ -447,9 +445,7 @@ def historical_targets(root: Path) -> list[ScanTarget]:
         if git_object.kind == "blob" and oid not in seen_blobs:
             path = hinted_paths.get(oid, "")
             display_path = path or "<blob>"
-            targets.append(
-                ScanTarget(f"git:{oid.decode('ascii')}:{display_path}", path, git_object.data)
-            )
+            targets.append(ScanTarget(f"git:{oid.decode('ascii')}:{display_path}", path, git_object.data))
         elif git_object.kind in ("commit", "tag"):
             targets.append(
                 ScanTarget(
@@ -506,9 +502,7 @@ def decode_text(data: bytes) -> list[tuple[str, str]]:
         bounded = data[: MAX_DECODED_BYTES * 2 + 2]
         if len(bounded) % 2:
             bounded = bounded[:-1]
-        codec = (
-            "utf-16" if bounded.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)) else encoding
-        )
+        codec = "utf-16" if bounded.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)) else encoding
         decoded.append((encoding, bounded.decode(codec, errors="replace")))
     return decoded
 
@@ -719,9 +713,7 @@ def run_self_tests(temp_root: Path | None) -> SelfTestResult:
         "/" + "Users/you/.tool-state/run",
     )
     for index, example in enumerate(safe_examples, 1):
-        if macos_key in violation_keys(
-            ScanTarget(f"self-test:false-positive-{index}", "", example.encode("utf-8"))
-        ):
+        if macos_key in violation_keys(ScanTarget(f"self-test:false-positive-{index}", "", example.encode("utf-8"))):
             raise AssertionError(f"benign macOS-path example {index} was rejected")
 
     if temp_root is None:
@@ -755,20 +747,11 @@ def run_self_tests(temp_root: Path | None) -> SelfTestResult:
         if not {"safe.txt", f"{private_project}/copy.txt"} <= tracked_labels:
             raise AssertionError("tracked-only scan omitted a tracked file")
 
-        history_violations = [
-            violation for target in historical_targets(root) for violation in scan_target(target)
-        ]
-        if not any(
-            violation.rule_key == project_key and "copy.txt" in violation.label
-            for violation in history_violations
-        ):
+        history_violations = [violation for target in historical_targets(root) for violation in scan_target(target)]
+        if not any(violation.rule_key == project_key and "copy.txt" in violation.label for violation in history_violations):
             raise AssertionError("private duplicate-blob filename was not detected")
-        ref_violations = [
-            violation for target in reference_targets(root) for violation in scan_target(target)
-        ]
-        ref_labels = {
-            violation.label for violation in ref_violations if violation.rule_key == project_key
-        }
+        ref_violations = [violation for target in reference_targets(root) for violation in scan_target(target)]
+        ref_labels = {violation.label for violation in ref_violations if violation.rule_key == project_key}
         for ref_kind in ("tags", "heads", "notes"):
             if not any(f"refs/{ref_kind}/" in label for label in ref_labels):
                 raise AssertionError(f"private {ref_kind} ref name was not detected")
@@ -813,10 +796,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--temp-root",
         type=Path,
-        help=(
-            "temporary root for Git-backed self-tests; otherwise use "
-            "PRIVACY_SCAN_TEMP_ROOT or Python's temporary directory"
-        ),
+        help=("temporary root for Git-backed self-tests; otherwise use PRIVACY_SCAN_TEMP_ROOT or Python's temporary directory"),
     )
     return parser.parse_args(argv)
 
@@ -840,9 +820,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         skipped_reason = temp_root_error
     if skipped_reason is not None:
         print(
-            "privacy scan self-test: SKIP "
-            f"({self_test.checks} in-memory checks passed; Git-backed checks skipped: "
-            f"{skipped_reason})",
+            f"privacy scan self-test: SKIP ({self_test.checks} in-memory checks passed; Git-backed checks skipped: {skipped_reason})",
             file=sys.stderr,
         )
 
@@ -860,10 +838,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             historical = historical_targets(ROOT)
             references = reference_targets(ROOT)
             targets = working + historical + references
-            mode_summary = (
-                f"{len(working)} working-tree file(s), {len(historical)} historical target(s), "
-                f"{len(references)} ref name(s)"
-            )
+            mode_summary = f"{len(working)} working-tree file(s), {len(historical)} historical target(s), {len(references)} ref name(s)"
     except ScanError as error:
         print(f"privacy scan: ERROR (scanner could not run: {error})", file=sys.stderr)
         return 2
@@ -879,14 +854,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if violations:
         for violation in violations:
-            print(
-                f"{violation.label}:{violation.line}: {violation.rule_key}: "
-                f"{violation.match!r} ({violation.reason})"
-            )
-        print(
-            f"privacy scan: FAIL (private data found: {len(violations)} violation(s); "
-            f"{mode_summary})"
-        )
+            print(f"{violation.label}:{violation.line}: {violation.rule_key}: {violation.match!r} ({violation.reason})")
+        print(f"privacy scan: FAIL (private data found: {len(violations)} violation(s); {mode_summary})")
         return 1
 
     print(f"privacy scan: ok ({mode_summary}; {len(FORBIDDEN_RULES)} rules)")

@@ -73,9 +73,7 @@ def parse_frontmatter(path: Path) -> Frontmatter:
     lines = path.read_text(encoding="utf-8").split("\n")
     if not lines or lines[0].strip() != "---":
         raise ValueError("no frontmatter, the file must open with a --- line")
-    close = next(
-        (index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"), None
-    )
+    close = next((index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"), None)
     if close is None:
         raise ValueError("frontmatter is never closed by a --- line")
 
@@ -128,10 +126,7 @@ def check_common(data: Frontmatter) -> list[str]:
     problems = require_text(data, "name") + require_text(data, "description")
     name = data.get("name")
     if isinstance(name, str) and name and not SLUG.match(name):
-        problems.append(
-            f"name {name!r} is not a lowercase slug ({SLUG.pattern}); "
-            "it is the last segment of <plugin>:<name>"
-        )
+        problems.append(f"name {name!r} is not a lowercase slug ({SLUG.pattern}); it is the last segment of <plugin>:<name>")
     return problems
 
 
@@ -139,24 +134,16 @@ def check_agent(data: Frontmatter) -> list[str]:
     problems: list[str] = []
     unsupported = sorted(set(data) - set(AGENT_KEYS))
     if unsupported:
-        problems.append(
-            f"unsupported key(s) {', '.join(unsupported)}. "
-            f"The keys this repo's agents may set are: {', '.join(AGENT_KEYS)}"
-        )
+        problems.append(f"unsupported key(s) {', '.join(unsupported)}. The keys this repo's agents may set are: {', '.join(AGENT_KEYS)}")
     model = data.get("model")
     if model and not (isinstance(model, str) and (model in MODELS or FULL_MODEL.fullmatch(model))):
-        problems.append(
-            f"model {model!r} is not a documented model alias or a version-bearing "
-            "claude-* model ID"
-        )
+        problems.append(f"model {model!r} is not a documented model alias or a version-bearing claude-* model ID")
     effort = data.get("effort")
     if effort and effort not in EFFORTS:
         problems.append(f"effort {effort!r} is not one of {', '.join(EFFORTS)}")
     isolation = data.get("isolation")
     if isolation and isolation != "worktree":
-        problems.append(
-            f"isolation {isolation!r} is not worktree, the only value that does anything"
-        )
+        problems.append(f"isolation {isolation!r} is not worktree, the only value that does anything")
     turns = data.get("maxTurns")
     if turns and not (isinstance(turns, str) and turns.isdigit() and int(turns) > 0):
         problems.append(f"maxTurns {turns!r} is not a positive integer")

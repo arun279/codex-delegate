@@ -43,9 +43,7 @@ class FixedNumber(NamedTuple):
 
 
 DELIBERATELY_FIXED = {
-    "MIN_DEADLINE": FixedNumber(
-        1, "The minimum deadline stays fixed because the public runner contract promises it."
-    ),
+    "MIN_DEADLINE": FixedNumber(1, "The minimum deadline stays fixed because the public runner contract promises it."),
     "MAX_DEADLINE": FixedNumber(
         MAX_DEADLINE,
         "The maximum deadline stays fixed because the public runner contract promises it.",
@@ -111,18 +109,10 @@ TUNABLES = {
         False,
         "run",
     ),
-    "LINE_LIMIT": TunableSpec(
-        "CODEX_DELEGATE_LINE_LIMIT", 1024 * 1024, parse_integer, 256, 64 * 1024 * 1024, False, "run"
-    ),
-    "READ_BATCH": TunableSpec(
-        "CODEX_DELEGATE_READ_BATCH", 32, parse_integer, 1, 4096, False, "run"
-    ),
-    "TERMINAL_SETTLE_LIMIT_SECONDS": TunableSpec(
-        "CODEX_DELEGATE_TERMINAL_SETTLE_LIMIT_SECONDS", 2.5, parse_number, 0.0, 60.0, False, "run"
-    ),
-    "RUN_KEEP_LIMIT": TunableSpec(
-        "CODEX_DELEGATE_RUN_KEEP_LIMIT", 100, parse_integer, 0, 1000000, False, "run"
-    ),
+    "LINE_LIMIT": TunableSpec("CODEX_DELEGATE_LINE_LIMIT", 1024 * 1024, parse_integer, 256, 64 * 1024 * 1024, False, "run"),
+    "READ_BATCH": TunableSpec("CODEX_DELEGATE_READ_BATCH", 32, parse_integer, 1, 4096, False, "run"),
+    "TERMINAL_SETTLE_LIMIT_SECONDS": TunableSpec("CODEX_DELEGATE_TERMINAL_SETTLE_LIMIT_SECONDS", 2.5, parse_number, 0.0, 60.0, False, "run"),
+    "RUN_KEEP_LIMIT": TunableSpec("CODEX_DELEGATE_RUN_KEEP_LIMIT", 100, parse_integer, 0, 1000000, False, "run"),
 }
 
 
@@ -244,27 +234,15 @@ def resolve_tunables(cli_values: dict[str, str | None], active: frozenset[str]) 
     resolved: dict[str, Number] = {}
     for name, spec in TUNABLES.items():
         cli_raw = cli_values.get(name) if name in active and spec.cli_flag else None
-        raw = (
-            cli_raw
-            if cli_raw is not None
-            else os.environ.get(spec.environment)
-            if name in active
-            else None
-        )
+        raw = cli_raw if cli_raw is not None else os.environ.get(spec.environment) if name in active else None
         received = raw if raw is not None else str(spec.default)
         kind = "an integer" if spec.parser is parse_integer else "a number"
         try:
             value = spec.parser(received)
         except (ValueError, OverflowError) as error:
-            raise UserError(
-                f"{spec.environment} received {received!r}; must be {kind} "
-                f"between {spec.lower} and {spec.upper}"
-            ) from error
+            raise UserError(f"{spec.environment} received {received!r}; must be {kind} between {spec.lower} and {spec.upper}") from error
         if not spec.lower <= value <= spec.upper:
-            raise UserError(
-                f"{spec.environment} received {received!r}; must be {kind} "
-                f"between {spec.lower} and {spec.upper}"
-            )
+            raise UserError(f"{spec.environment} received {received!r}; must be {kind} between {spec.lower} and {spec.upper}")
         resolved[name] = value
     if (
         "RUNNER_WAIT_SECONDS" in active
@@ -306,9 +284,7 @@ def parser() -> argparse.ArgumentParser:
     prompts = run.add_mutually_exclusive_group(required=True)
     prompts.add_argument("--prompt-stdin", action="store_true")
     prompts.add_argument("--prompt-file")
-    run.add_argument(
-        "--sandbox", required=True, choices=("read-only", "workspace-write", "danger-full-access")
-    )
+    run.add_argument("--sandbox", required=True, choices=("read-only", "workspace-write", "danger-full-access"))
     run.add_argument("--network", action="store_true")
     run.add_argument("--cwd", default=os.getcwd())
     run.add_argument("--add-dir", action="append", default=[])
@@ -405,9 +381,7 @@ def catalog(codex: str) -> list[Model]:
     if completed.returncode != 0:
         detail = completed.stderr.strip()
         suffix = f": {detail}" if detail else ""
-        raise UserError(
-            f"cannot read the live Codex model catalog (exit {completed.returncode}){suffix}"
-        )
+        raise UserError(f"cannot read the live Codex model catalog (exit {completed.returncode}){suffix}")
     try:
         raw = json.loads(completed.stdout)
         entries = raw["models"]
@@ -435,11 +409,7 @@ def catalog(codex: str) -> list[Model]:
         default = entry.get("default_reasoning_level")
         if default not in efforts:
             default = next(
-                (
-                    item
-                    for item in ("medium", "low", "high", "xhigh", "max", "ultra")
-                    if item in efforts
-                ),
+                (item for item in ("medium", "low", "high", "xhigh", "max", "ultra") if item in efforts),
                 efforts[0],
             )
         priority = entry.get("priority")
@@ -458,18 +428,14 @@ def catalog(codex: str) -> list[Model]:
     return models
 
 
-def resolve_pair(
-    models: list[Model] | None, requested_model: str | None, requested_effort: str | None
-) -> tuple[str, str]:
+def resolve_pair(models: list[Model] | None, requested_model: str | None, requested_effort: str | None) -> tuple[str, str]:
     if requested_model is not None and not TOKEN.fullmatch(requested_model):
         raise UserError("--model must contain only letters, digits, '.', '_', and '-'")
     if requested_effort is not None and not TOKEN.fullmatch(requested_effort):
         raise UserError("--effort must contain only letters, digits, '.', '_', and '-'")
     if models is None:
         if requested_model is None or requested_effort is None:
-            raise UserError(
-                "the model catalog is required unless --model and --effort are both set"
-            )
+            raise UserError("the model catalog is required unless --model and --effort are both set")
         return requested_model, requested_effort
     if requested_model is None:
         visible = [model for model in models if model["visible"]]
@@ -494,11 +460,7 @@ def allocate_run(root: str, requested: str | None, runner_handoff: bool) -> tupl
         raise UserError("--runid may contain only letters, digits, '.', '_', and '-'")
     while True:
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-        generated = (
-            f"runner-{secrets.token_hex(16)}"
-            if runner_handoff
-            else f"{stamp}-{os.getpid()}-{secrets.token_hex(3)}"
-        )
+        generated = f"runner-{secrets.token_hex(16)}" if runner_handoff else f"{stamp}-{os.getpid()}-{secrets.token_hex(3)}"
         runid = requested or generated
         run_dir = os.path.join(root, runid)
         try:
@@ -620,10 +582,7 @@ def proven_marker_mtime(root: str, candidate: str) -> int | None:
     try:
         resolved_root = os.path.realpath(root)
         resolved = os.path.realpath(candidate)
-        if (
-            resolved == resolved_root
-            or os.path.commonpath((resolved_root, resolved)) != resolved_root
-        ):
+        if resolved == resolved_root or os.path.commonpath((resolved_root, resolved)) != resolved_root:
             return None
         descriptor = os.open(
             os.path.join(resolved, RUN_MARKER_NAME),
@@ -750,14 +709,9 @@ def runner_report(output_path: str) -> int:
     if written == 0:
         location = run_dir or "the unresolved runner launch"
         print(f"{PROGRAM}: the launcher ended before it could report; no result for {location}")
-    elif (run_dir is None and not ended) or (
-        run_dir is not None and not regular_nonempty(os.path.join(run_dir, "status.json"))
-    ):
+    elif (run_dir is None and not ended) or (run_dir is not None and not regular_nonempty(os.path.join(run_dir, "status.json"))):
         location = run_dir or "the unresolved runner launch"
-        print(
-            f"{PROGRAM}: the launcher ended before it could report terminal status; "
-            f"preceding output may be incomplete for {location}"
-        )
+        print(f"{PROGRAM}: the launcher ended before it could report terminal status; preceding output may be incomplete for {location}")
     return 0
 
 
@@ -791,9 +745,7 @@ def copy_prompt(
     try:
         while True:
             check_prompt_state(notice, deadline_at)
-            if watcher is not None and not watcher.select(
-                min(0.1, max(0.0, deadline_at - time.monotonic()))
-            ):
+            if watcher is not None and not watcher.select(min(0.1, max(0.0, deadline_at - time.monotonic()))):
                 continue
             check_prompt_state(notice, deadline_at)
             try:
@@ -823,9 +775,7 @@ def store_prompt(args: Arguments, path: str, notice: SignalNotice, deadline_at: 
                     os.fstat(sys.stdin.buffer.fileno())
                 except OSError as error:
                     if error.errno == errno.EBADF:
-                        raise UserError(
-                            "cannot read prompt from stdin: standard input is closed"
-                        ) from error
+                        raise UserError("cannot read prompt from stdin: standard input is closed") from error
                     raise
                 copy_prompt(
                     sys.stdin.buffer,
@@ -1110,9 +1060,7 @@ def print_result(final_path: str, status: Status) -> None:
         discard_stdout_error()
 
 
-def publish_result(
-    root: str, final_path: str, status_path: str, status: Status, keep_limit: int
-) -> None:
+def publish_result(root: str, final_path: str, status_path: str, status: Status, keep_limit: int) -> None:
     atomic_status(status_path, status)
     print_result(final_path, status)
     prune_runs(root, retention_limit(keep_limit))
@@ -1338,11 +1286,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
             capture.mark_error("final_message_write_failed")
 
     signal_number = notice["number"]
-    signal_name = (
-        signal.Signals(signal_number).name
-        if outcome == "signal" and signal_number is not None
-        else None
-    )
+    signal_name = signal.Signals(signal_number).name if outcome == "signal" and signal_number is not None else None
     verdict: str
     diagnostic: str | None
     code: int
