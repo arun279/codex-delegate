@@ -127,7 +127,9 @@ A stopped run uses verdict `STOPPED` and exits with 128 plus the signal number: 
 
 ## Privacy, trust, and cleanup limits
 
-Starting a run sends the prompt and whatever files Codex reads to OpenAI through the signed-in Codex CLI and spends that account's ChatGPT Codex allowance or API-billed usage. The private run directory under `~/.codex-delegate/<runid>/` stores `pid`, `prompt.txt`, `events.jsonl`, `stderr.log`, an optional `final.txt`, and `status.json`. The root is owner-only and the prompt is transported to Codex through stdin, not its process arguments.
+Starting a run sends the prompt and whatever files Codex reads to OpenAI through the signed-in Codex CLI and spends that account's ChatGPT Codex allowance or API-billed usage. The private run directory under `~/.codex-delegate/<runid>/` stores an ownership marker, `pid`, `prompt.txt`, `events.jsonl`, `stderr.log`, an optional `final.txt`, and `status.json`. A launcher-created root also contains the standard `CACHEDIR.TAG`. The root is owner-only and the prompt is transported to Codex through stdin, not its process arguments.
+
+After each run reaches terminal status, the launcher keeps the newest 100 inactive runs whose ownership marker it can prove and removes older proven runs in marker-mtime order. Live runs, directories without the exact marker, markers that are symlinks or owned by another user, and anything outside or equal to the run root are never removed automatically. Pruning is best-effort and cannot change the completed run's verdict or exit code; there is no background pruning process.
 
 For `read-only` and `workspace-write`, launcher state is outside Codex's writable roots. With `danger-full-access`, Codex runs as the same user and can modify any local artifact, including its run directory. In that sandbox, local status is operational output, not tamper-proof attestation.
 

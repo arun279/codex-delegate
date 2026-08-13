@@ -429,6 +429,115 @@ RC=$?
 check '[ "$RC" = 2 ] && grep -q "overlaps writable root" "$WORK/overlap.out"' \
   "workspace-write cannot overlap launcher control state"
 
+head_ "owned run retention"
+FRESH_ROOT=$WORK/fresh-runs
+CODEX_DELEGATE_HOME=$FRESH_ROOT STUB_MODE=ok "$BIN" run \
+  --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model stub-model-a --effort medium --runid marked-run \
+  >"$WORK/marked-run.out" 2>"$WORK/marked-run.err"
+RC=$?
+check '[ "$RC" = 0 ] &&
+       [ "$(dd if="$FRESH_ROOT/CACHEDIR.TAG" bs=43 count=1 2>/dev/null)" = "Signature: 8a477f597d28d172789f06886806bc55" ] &&
+       [ "$(cat "$FRESH_ROOT/marked-run/.codex-delegate-run")" = "codex-delegate run directory" ]' \
+  "launcher-created roots and runs carry their ownership markers"
+
+UNPROVEN_ROOT=$WORK/unproven-runs
+mkdir -p "$UNPROVEN_ROOT/no-marker" "$UNPROVEN_ROOT/wrong-marker" "$WORK/outside-run"
+printf '%s\n' 'not a codex-delegate marker' \
+  >"$UNPROVEN_ROOT/wrong-marker/.codex-delegate-run"
+: >"$UNPROVEN_ROOT/no-marker/pid"
+: >"$UNPROVEN_ROOT/wrong-marker/pid"
+: >"$WORK/outside-run/pid"
+ln -s "$WORK/outside-run" "$UNPROVEN_ROOT/directory-symlink"
+printf '%s\n' 'codex-delegate run directory' >"$UNPROVEN_ROOT/.codex-delegate-run"
+: >"$UNPROVEN_ROOT/pid"
+CODEX_DELEGATE_HOME=$UNPROVEN_ROOT CODEX_DELEGATE_TEST_BIN=$BIN \
+  CODEX_DELEGATE_TEST_KEEP_LIMIT=0 STUB_MODE=ok "$BIN" run \
+  --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model stub-model-a --effort medium --runid retention-unproven \
+  >"$WORK/retention-unproven.out" 2>"$WORK/retention-unproven.err"
+RC=$?
+# Mutation: accepting a name, absent marker, wrong marker, or followed symlink as proof removes a seed.
+check '[ "$RC" = 0 ] && [ -d "$UNPROVEN_ROOT/no-marker" ] &&
+       [ -d "$UNPROVEN_ROOT/wrong-marker" ] &&
+       [ -L "$UNPROVEN_ROOT/directory-symlink" ] && [ -d "$WORK/outside-run" ]' \
+  "limit zero silently preserves every unproven directory and directory symlink"
+# Mutation: allowing the run root into the candidate set removes the store itself.
+check '[ -d "$UNPROVEN_ROOT" ] && [ -f "$UNPROVEN_ROOT/.codex-delegate-run" ]' \
+  "a prune pass refuses the run root itself"
+
+FIFO_ROOT=$WORK/fifo-runs
+mkdir -p "$FIFO_ROOT/fifo-marker" "$FIFO_ROOT/fifo-pid"
+mkfifo "$FIFO_ROOT/fifo-marker/.codex-delegate-run"
+printf '%s\n' 'codex-delegate run directory' \
+  >"$FIFO_ROOT/fifo-pid/.codex-delegate-run"
+mkfifo "$FIFO_ROOT/fifo-pid/pid"
+CODEX_DELEGATE_HOME=$FIFO_ROOT CODEX_DELEGATE_TEST_BIN=$BIN \
+  CODEX_DELEGATE_TEST_KEEP_LIMIT=0 STUB_MODE=ok "$BIN" run \
+  --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model stub-model-a --effort medium --runid retention-fifo \
+  >"$WORK/retention-fifo.out" 2>"$WORK/retention-fifo.err" &
+FIFO_LAUNCHER_PID=$!
+FIFO_WAIT=0
+while kill -0 "$FIFO_LAUNCHER_PID" 2>/dev/null && [ "$FIFO_WAIT" -lt 500 ]; do
+  sleep 0.01
+  FIFO_WAIT=$((FIFO_WAIT + 1))
+done
+if kill -0 "$FIFO_LAUNCHER_PID" 2>/dev/null; then
+  kill -9 "$FIFO_LAUNCHER_PID" 2>/dev/null || true
+  wait "$FIFO_LAUNCHER_PID" 2>/dev/null || true
+  RC=124
+else
+  wait "$FIFO_LAUNCHER_PID"
+  RC=$?
+fi
+# Mutation: omitting O_NONBLOCK from either ownership-marker or pid opens hangs pruning.
+check '[ "$RC" = 0 ] && [ -p "$FIFO_ROOT/fifo-marker/.codex-delegate-run" ] &&
+       [ -p "$FIFO_ROOT/fifo-pid/pid" ]' \
+  "FIFO marker and pid paths are kept without blocking prune completion"
+
+ORDER_ROOT=$WORK/ordered-runs
+mkdir -p "$ORDER_ROOT/valid-old" "$ORDER_ROOT/valid-new"
+for RUN_NAME in valid-old valid-new; do
+  printf '%s\n' 'codex-delegate run directory' \
+    >"$ORDER_ROOT/$RUN_NAME/.codex-delegate-run"
+  : >"$ORDER_ROOT/$RUN_NAME/pid"
+done
+touch -t 202001010000 "$ORDER_ROOT/valid-old/.codex-delegate-run"
+touch -t 202101010000 "$ORDER_ROOT/valid-new/.codex-delegate-run"
+CODEX_DELEGATE_HOME=$ORDER_ROOT CODEX_DELEGATE_TEST_BIN=$BIN \
+  CODEX_DELEGATE_TEST_KEEP_LIMIT=1 STUB_MODE=ok "$BIN" run \
+  --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model stub-model-a --effort medium --runid retention-order \
+  >"$WORK/retention-order.out" 2>"$WORK/retention-order.err"
+RC=$?
+# Mutation: sorting newest-first removes valid-new instead of valid-old.
+check '[ "$RC" = 0 ] && [ ! -e "$ORDER_ROOT/valid-old" ] &&
+       [ -d "$ORDER_ROOT/valid-new" ]' \
+  "retention removes only the oldest proven inactive run beyond the limit"
+
+LIVE_ROOT=$WORK/live-runs
+mkdir -p "$LIVE_ROOT/live-old"
+printf '%s\n' 'codex-delegate run directory' >"$LIVE_ROOT/live-old/.codex-delegate-run"
+python3 -c 'import fcntl, os, sys, time
+descriptor = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o600)
+fcntl.flock(descriptor, fcntl.LOCK_EX)
+open(sys.argv[2], "w").close()
+time.sleep(30)' "$LIVE_ROOT/live-old/pid" "$WORK/live-lock-ready" &
+LIVE_LOCK_PID=$!
+while [ ! -e "$WORK/live-lock-ready" ]; do sleep 0.01; done
+CODEX_DELEGATE_HOME=$LIVE_ROOT CODEX_DELEGATE_TEST_BIN=$BIN \
+  CODEX_DELEGATE_TEST_KEEP_LIMIT=0 STUB_MODE=ok "$BIN" run \
+  --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --deadline 10 --model stub-model-a --effort medium --runid retention-live \
+  >"$WORK/retention-live.out" 2>"$WORK/retention-live.err"
+RC=$?
+kill "$LIVE_LOCK_PID" 2>/dev/null || true
+wait "$LIVE_LOCK_PID" 2>/dev/null || true
+# Mutation: omitting the nonblocking pid-lock check removes live-old.
+check '[ "$RC" = 0 ] && [ -d "$LIVE_ROOT/live-old" ]' \
+  "a live proven run survives limit zero regardless of age"
+
 check 'status_schemas_' "every run-suite verdict fixture has exactly 16 status fields"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

@@ -37,6 +37,10 @@ EVENT_LIMIT = 16 * 1024 * 1024
 LINE_LIMIT = 1024 * 1024
 READ_BATCH = 32
 TERMINAL_SETTLE_LIMIT_SECONDS = 2.5
+RUN_KEEP_LIMIT = 100
+CACHEDIR_TAG = b"Signature: 8a477f597d28d172789f06886806bc55\n"
+RUN_MARKER_NAME = ".codex-delegate-run"
+RUN_MARKER = b"codex-delegate run directory\n"
 RUNNER_PID_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_PID=([1-9][0-9]*)\n\Z")
 RUNNER_RUNID_RECORD = re.compile(rb"CODEX_DELEGATE_RUNID=(runner-[0-9a-f]{32})\n\Z")
 RUNNER_END_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_ENDED=([1-9][0-9]*)\n\Z")
@@ -206,7 +210,12 @@ def secure_run_root() -> str:
     physical = os.path.realpath(absolute)
     if physical != absolute:
         raise UserError(f"run storage must not traverse a symlink: {absolute}")
-    os.makedirs(physical, mode=0o700, exist_ok=True)
+    created = False
+    try:
+        os.makedirs(physical, mode=0o700)
+        created = True
+    except FileExistsError:
+        pass
     if not os.path.isdir(physical):
         raise UserError(f"run storage is not a directory: {physical}")
     current_uid = os.getuid()
@@ -224,6 +233,11 @@ def secure_run_root() -> str:
     if os.stat(physical).st_uid != current_uid:
         raise UserError(f"run storage must be owned by the current user: {physical}")
     os.chmod(physical, 0o700)
+    if created:
+        with open(os.path.join(physical, "CACHEDIR.TAG"), "xb", buffering=0) as marker:
+            if marker.write(CACHEDIR_TAG) != len(CACHEDIR_TAG):
+                raise OSError("short write while marking run storage")
+            os.fsync(marker.fileno())
     return physical
 
 
@@ -340,6 +354,14 @@ def allocate_run(root: str, requested: str | None, runner_handoff: bool) -> tupl
         run_dir = os.path.join(root, runid)
         try:
             os.mkdir(run_dir, 0o700)
+            try:
+                with open(os.path.join(run_dir, RUN_MARKER_NAME), "xb", buffering=0) as marker:
+                    if marker.write(RUN_MARKER) != len(RUN_MARKER):
+                        raise OSError("short write while marking run directory")
+                    os.fsync(marker.fileno())
+            except BaseException:
+                os.rmdir(run_dir)
+                raise
             return runid, run_dir
         except FileExistsError as error:
             if requested is not None:
@@ -413,7 +435,7 @@ def process_exists(pid: int) -> bool:
 
 
 def pid_lock_released(path: str) -> bool | None:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError:
@@ -430,6 +452,67 @@ def pid_lock_released(path: str) -> bool | None:
         return None
     finally:
         os.close(descriptor)
+
+
+def retention_limit() -> int:
+    test_bin = os.environ.get("CODEX_DELEGATE_TEST_BIN")
+    if test_bin is None or os.path.realpath(test_bin) != os.path.realpath(sys.argv[0]):
+        return RUN_KEEP_LIMIT
+    raw = os.environ.get("CODEX_DELEGATE_TEST_KEEP_LIMIT")
+    if raw is None:
+        return RUN_KEEP_LIMIT
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return RUN_KEEP_LIMIT
+
+
+def proven_marker_mtime(root: str, candidate: str) -> int | None:
+    try:
+        resolved_root = os.path.realpath(root)
+        resolved = os.path.realpath(candidate)
+        if (
+            resolved == resolved_root
+            or os.path.commonpath((resolved_root, resolved)) != resolved_root
+        ):
+            return None
+        descriptor = os.open(
+            os.path.join(resolved, RUN_MARKER_NAME),
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+        )
+    except (OSError, ValueError):
+        return None
+    try:
+        state = os.fstat(descriptor)
+        if not stat.S_ISREG(state.st_mode) or state.st_uid != os.getuid():
+            return None
+        if os.read(descriptor, len(RUN_MARKER) + 1) != RUN_MARKER:
+            return None
+        return state.st_mtime_ns
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def prune_runs(root: str) -> None:
+    proven: list[tuple[int, str]] = []
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                mtime = proven_marker_mtime(root, entry.path)
+                if mtime is None or pid_lock_released(os.path.join(entry.path, "pid")) is not True:
+                    continue
+                proven.append((mtime, entry.path))
+    except OSError:
+        return
+    proven.sort(key=lambda item: (item[0], item[1]))
+    excess = len(proven) - retention_limit()
+    for _mtime, path in proven[: max(0, excess)]:
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            pass
 
 
 def runner_wait(output_path: str) -> int:
@@ -870,6 +953,12 @@ def print_result(final_path: str, status: Status) -> None:
         discard_stdout_error()
 
 
+def publish_result(root: str, final_path: str, status_path: str, status: Status) -> None:
+    atomic_status(status_path, status)
+    print_result(final_path, status)
+    prune_runs(root)
+
+
 def status_for(
     context: RunContext,
     verdict: str,
@@ -961,8 +1050,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
             None,
             None,
         )
-        atomic_status(status_path, status)
-        print_result(final_path, status)
+        publish_result(root, final_path, status_path, status)
         return 128 + error.number
     except PromptDeadline:
         status = status_for(
@@ -975,8 +1063,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
             None,
             None,
         )
-        atomic_status(status_path, status)
-        print_result(final_path, status)
+        publish_result(root, final_path, status_path, status)
         return EXIT["DEADLINE"]
     except UserError as error:
         print(f"{PROGRAM}: {error}", file=sys.stderr)
@@ -990,8 +1077,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
             None,
             None,
         )
-        atomic_status(status_path, status)
-        print_result(final_path, status)
+        publish_result(root, final_path, status_path, status)
         return EXIT["LAUNCH_ERROR"]
 
     command = codex_argv(codex, args, model, effort, final_path, cwd, add_dirs, schema)
@@ -1024,8 +1110,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
                 None,
                 None,
             )
-            atomic_status(status_path, status)
-            print_result(final_path, status)
+            publish_result(root, final_path, status_path, status)
             return EXIT["LAUNCH_ERROR"]
 
         fd = cast(BinaryIO, process.stdout).fileno()
@@ -1138,8 +1223,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
         process_code,
         capture.terminal,
     )
-    atomic_status(status_path, status)
-    print_result(final_path, status)
+    publish_result(root, final_path, status_path, status)
     return code
 
 
