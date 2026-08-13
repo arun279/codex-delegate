@@ -103,6 +103,21 @@ Use `--prompt-stdin` when the prompt arrives on standard input. `run` blocks unt
 | `--runid ID` | Optional unique artifact-directory name using letters, digits, `.`, `_`, and `-`. |
 | `--runner-handoff` | Internal runner mode; the launcher mints the ID. |
 
+## Environment overrides
+
+The command-line flag wins over its environment variable, which wins over the hard-coded default. Invalid values exit with a diagnostic naming the variable and received value.
+
+| variable | default | bounds |
+| --- | --: | --: |
+| `CODEX_DELEGATE_DEADLINE` | 7,200 seconds | 1-12,960 seconds |
+| `CODEX_DELEGATE_RUNNER_WAIT_SECONDS` | 110 seconds | 110-119 seconds |
+| `CODEX_DELEGATE_RUNNER_STARTUP_SECONDS` | 60 seconds | 1-118 seconds; less than runner wait |
+| `CODEX_DELEGATE_EVENT_LIMIT` | 16,777,216 bytes | 1,024-1,073,741,824 bytes |
+| `CODEX_DELEGATE_LINE_LIMIT` | 1,048,576 bytes | 256-67,108,864 bytes |
+| `CODEX_DELEGATE_READ_BATCH` | 32 reads | 1-4,096 reads |
+| `CODEX_DELEGATE_TERMINAL_SETTLE_LIMIT_SECONDS` | 2.5 seconds | 0-60 seconds |
+| `CODEX_DELEGATE_RUN_KEEP_LIMIT` | 100 runs | 0-1,000,000 runs |
+
 The launcher passes approvals disabled, JSON output, the selected sandbox, and the prompt on stdin to `codex exec`. `workspace-write` runs are rejected if their writable roots overlap launcher state.
 
 By default, `workspace-write` protects each writable root's `.git` path and the resolved Git directory of a linked worktree as read-only. A trusted caller can opt in to Git metadata changes without using `danger-full-access`: from the target worktree, run `git rev-parse --path-format=absolute --git-common-dir` in the trusted caller and pass that common Git directory as its own writable root with `--add-dir`. In a linked worktree, the common directory contains both the shared object database and the worktree-specific metadata. This grants the delegated run write access to all metadata beneath that directory, not only the index. Permission profiles do not compose with the `--sandbox` flag this launcher always passes.
