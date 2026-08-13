@@ -154,13 +154,10 @@ STUB_ARGV_CAPTURE=$WORK/absent-prompt.argv \
   --runid absent-prompt >"$WORK/absent-prompt.out" 2>"$WORK/absent-prompt.err"
 RC=$?
 check '[ "$RC" = 2 ] && grep -q "cannot read prompt file" "$WORK/absent-prompt.err" &&
-       [ -s "$WORK/runs/absent-prompt/pid" ] &&
-       [ -e "$WORK/runs/absent-prompt/prompt.txt" ] &&
+       [ ! -e "$WORK/runs/absent-prompt" ] &&
        [ ! -e "$WORK/absent-prompt.argv" ] &&
-       [ "$(json_ "$WORK/runs/absent-prompt/status.json" verdict)" = '"'"'"LAUNCH_ERROR"'"'"' ] &&
-       [ "$(json_ "$WORK/runs/absent-prompt/status.json" exit_code)" = 2 ] &&
-       python3 -c '"'"'import json,sys; raise SystemExit(json.load(open(sys.argv[1]))["diagnostic"] != "cannot read prompt file: " + sys.argv[2])'"'"' "$WORK/runs/absent-prompt/status.json" "$WORK/absent-prompt.txt"' \
-  "a missing prompt file records a terminal validation failure before Codex starts"
+       [ ! -e "$WORK/runs/absent-prompt/status.json" ]' \
+  "a missing prompt file fails validation before allocating a run"
 
 head_ "native exec invocation and prompt integrity"
 STUB_ARGV_CAPTURE=$WORK/argv.txt STUB_STDIN_CAPTURE=$WORK/stdin.txt STUB_MODE=ok \
@@ -289,6 +286,43 @@ printf 'LONGER NATIVE DOCUMENT\n' >"$WORK/native-output.expected"
 check 'cmp -s "$WORK/native-output.expected" "$RD/final.txt" &&
        [ "$(json_ "$RD/status.json" verdict)" = '"'"'"COMPLETED"'"'"' ]' \
   "an intact native -o document is neither replaced nor reported missing"
+
+LATE_RD=$WORK/runs/late-document
+LATE_PROMPT_GATE=$WORK/late-document-prompt-gate
+mkfifo "$LATE_PROMPT_GATE"
+STUB_MODE=native_mismatch STUB_STDIN_CAPTURE=$LATE_PROMPT_GATE \
+  "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+  --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \
+  --runid late-document >"$WORK/late-document.out" 2>"$WORK/late-document.err" &
+LATE_PID=$!
+(
+  until [ -d "$LATE_RD" ]; do
+    sleep 0.02
+  done
+  mkfifo "$LATE_RD/final.txt"
+  cat "$LATE_PROMPT_GATE" >/dev/null
+  until grep -q '"type":"turn.completed"' "$LATE_RD/events.jsonl" 2>/dev/null; do
+    sleep 0.02
+  done
+  (
+    sleep 0.9
+    : >"$LATE_RD/final.txt"
+  ) &
+  LATE_DUMMY_PID=$!
+  sleep 1
+  mv "$LATE_RD/final.txt" "$WORK/late-document.fifo"
+  : >"$LATE_RD/final.txt"
+  cat "$WORK/late-document.fifo" >"$LATE_RD/final.txt"
+  wait "$LATE_DUMMY_PID"
+) &
+LATE_WRITER_PID=$!
+wait "$LATE_PID"
+RC=$?
+wait "$LATE_WRITER_PID"
+printf 'LONGER NATIVE DOCUMENT\n' >"$WORK/late-document.expected"
+check '[ "$RC" = 0 ] && cmp -s "$WORK/late-document.expected" "$LATE_RD/final.txt" &&
+       [ "$(json_ "$LATE_RD/status.json" verdict)" = '"'"'"COMPLETED"'"'"' ]' \
+  "a native document arriving one second after the terminal event is collected"
 
 STUB_MODE=ok "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
   --cwd "$WORK/job" --deadline 10 --model gpt-5.6-sol --effort medium \

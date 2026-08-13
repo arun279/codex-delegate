@@ -36,7 +36,6 @@ RUNNER_STARTUP_SECONDS = 60
 EVENT_LIMIT = 16 * 1024 * 1024
 LINE_LIMIT = 1024 * 1024
 READ_BATCH = 32
-TERMINAL_SETTLE_IDLE_SECONDS = 0.5
 TERMINAL_SETTLE_LIMIT_SECONDS = 2.5
 RUNNER_PID_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_PID=([1-9][0-9]*)\n\Z")
 RUNNER_RUNID_RECORD = re.compile(rb"CODEX_DELEGATE_RUNID=(runner-[0-9a-f]{32})\n\Z")
@@ -115,10 +114,6 @@ class SignalNotice(TypedDict):
 
 
 class UserError(Exception):
-    pass
-
-
-class PromptSourceError(UserError):
     pass
 
 
@@ -402,9 +397,7 @@ def runner_records(path: str) -> tuple[int | None, str | None, bool]:
     return pid, runid, ended
 
 
-def runner_run_dir(runid: str | None) -> str | None:
-    if runid is None:
-        return None
+def runner_run_dir(runid: str) -> str:
     root = os.environ.get("CODEX_DELEGATE_HOME", str(Path.home() / ".codex-delegate"))
     return os.path.join(os.path.abspath(root), runid)
 
@@ -450,7 +443,7 @@ def runner_wait(output_path: str) -> int:
                 print("ENDED")
                 return 0
         else:
-            run_dir = cast(str, runner_run_dir(runid))
+            run_dir = runner_run_dir(runid)
             lock_released = pid_lock_released(os.path.join(run_dir, "pid"))
             launcher_dead = pid is not None and not process_exists(pid)
             if lock_released is not False and (ended or lock_released is True or launcher_dead):
@@ -508,7 +501,7 @@ def runner_report(output_path: str) -> int:
         print(f"{PROGRAM}: the launcher produced no result in {output_path}")
         return 0
     pid, runid, ended = runner_records(output_path)
-    run_dir = runner_run_dir(runid)
+    run_dir = runner_run_dir(runid) if runid is not None else None
     lock_released = pid_lock_released(os.path.join(run_dir, "pid")) if run_dir is not None else None
     if lock_released is False:
         raise UserError("runner-report cannot return output while the launcher is still running")
@@ -610,11 +603,9 @@ def store_prompt(args: Arguments, path: str, notice: SignalNotice, deadline_at: 
                     deadline_at,
                 )
             else:
-                try:
-                    source_path = readable_file(cast(str, args.prompt_file), "prompt file")
-                except UserError as error:
-                    raise PromptSourceError(str(error)) from error
-                with open(source_path, "rb") as source:
+                if args.prompt_file is None:
+                    raise UserError("prompt file is required")
+                with open(args.prompt_file, "rb") as source:
                     copy_prompt(
                         source,
                         output,
@@ -915,6 +906,8 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
         raise UserError("--network requires --sandbox workspace-write")
     cwd = canonical_dir(args.cwd, "--cwd")
     add_dirs = [canonical_dir(item, "--add-dir") for item in args.add_dir]
+    if args.prompt_file is not None:
+        args.prompt_file = readable_file(args.prompt_file, "prompt file")
     schema = readable_file(args.schema, "schema") if args.schema else None
     model, effort = resolve_pair(models, args.model, args.effort)
     root = secure_run_root()
@@ -985,21 +978,6 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
         atomic_status(status_path, status)
         print_result(final_path, status)
         return EXIT["DEADLINE"]
-    except PromptSourceError as error:
-        print(f"{PROGRAM}: {error}", file=sys.stderr)
-        status = status_for(
-            context,
-            "LAUNCH_ERROR",
-            2,
-            str(error),
-            None,
-            time.monotonic() - started_mono,
-            None,
-            None,
-        )
-        atomic_status(status_path, status)
-        print_result(final_path, status)
-        return 2
     except UserError as error:
         print(f"{PROGRAM}: {error}", file=sys.stderr)
         status = status_for(
@@ -1082,22 +1060,13 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
                     waiting = False
 
             if outcome == "terminal":
-                settled_at = time.monotonic()
-                settle_limit = settled_at + TERMINAL_SETTLE_LIMIT_SECONDS
-                activity_until = settle_limit
+                settle_until = time.monotonic() + TERMINAL_SETTLE_LIMIT_SECONDS
                 while process.poll() is None:
                     now = time.monotonic()
-                    settle_until = min(activity_until, settle_limit)
                     if now >= settle_until:
                         break
-                    before = capture.bytes_written
                     if watcher.select(min(0.05, settle_until - now)):
                         read_pipe(fd, capture)
-                    if capture.bytes_written != before:
-                        activity_until = min(
-                            time.monotonic() + TERMINAL_SETTLE_IDLE_SECONDS,
-                            settle_limit,
-                        )
         except OSError:
             capture.mark_error("event_stream_read_failed")
         finally:
@@ -1134,9 +1103,9 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
     if not clean:
         verdict, diagnostic = "CLEANUP_FAILED", "the Codex process group survived SIGKILL"
         code = EXIT[verdict]
-    elif outcome == "signal":
+    elif outcome == "signal" and signal_number is not None:
         verdict, diagnostic = "STOPPED", f"received {signal_name}"
-        code = 128 + cast(int, signal_number)
+        code = 128 + signal_number
     elif outcome == "deadline":
         verdict, diagnostic = "DEADLINE", f"wall-clock deadline of {args.deadline}s expired"
         code = EXIT[verdict]
@@ -1190,7 +1159,7 @@ def main() -> int:
         if len(sys.argv) != 3:
             raise UserError("runner-report requires exactly one harness output file")
         return runner_report(sys.argv[2])
-    args = cast(Arguments, parser().parse_args())
+    args = parser().parse_args(namespace=Arguments())
     if args.command == "run" and args.runner_handoff and args.runid is not None:
         raise UserError("--runner-handoff cannot be combined with --runid")
     codex = shutil.which("codex")
