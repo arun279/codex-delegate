@@ -161,7 +161,7 @@ check 'grep -q "run_step .*contract suite.*tests/contract.sh" "$GATE" &&
   "release gate retains every required suite, corpus, and determinism check"
 check 'gate_analysis=true
        # The gate is the only place these run. Losing one silently removes a whole
-       # class of check while every suite stays green, which was measured.
+       # class of check while every suite stays green.
        for step in "ruff check" "ruff format" "ruff security" "mypy strict" \
          "Python dead code" "POSIX preflight shellcheck" "Bash shellcheck" \
          "shell format" "shell syntax" "Markdown lint" "document format" \
