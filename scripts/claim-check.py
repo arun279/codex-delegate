@@ -132,6 +132,8 @@ def exception_return(source: str, function: str, exception: str) -> int | str:
         value = returns[0].value
         if isinstance(value, ast.Constant) and isinstance(value.value, int):
             return value.value
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+            return function_return(source, value.func.id)
         if (
             isinstance(value, ast.Subscript)
             and isinstance(value.value, ast.Name)
@@ -144,14 +146,69 @@ def exception_return(source: str, function: str, exception: str) -> int | str:
     raise ValueError(f"{function} has no {exception} handler")
 
 
+def function_return(source: str, function: str) -> int:
+    target = next(
+        (
+            node
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == function
+        ),
+        None,
+    )
+    if target is None:
+        raise ValueError(f"launcher function {function} was not found")
+    returns = [node for node in ast.walk(target) if isinstance(node, ast.Return)]
+    if len(returns) != 1 or not isinstance(returns[0].value, ast.Constant):
+        raise ValueError(f"{function} has no single fixed return")
+    value = returns[0].value.value
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"{function} does not return an integer")
+    return value
+
+
+def prompt_file_validation_precedes_allocation(source: str) -> bool:
+    target = next(
+        (
+            node
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "run"
+        ),
+        None,
+    )
+    if target is None:
+        raise ValueError("launcher function run was not found")
+    validation_lines = [
+        node.lineno
+        for node in ast.walk(target)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "readable_file"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "prompt file"
+    ]
+    allocation_lines = [
+        node.lineno
+        for node in ast.walk(target)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "allocate_run"
+    ]
+    return bool(
+        validation_lines and allocation_lines and max(validation_lines) < min(allocation_lines)
+    )
+
+
 def prompt_exit_contract(source: str, readme: str, exits: dict[str, int]) -> list[str]:
     problems: list[str] = []
-    source_exit = exception_return(source, "run", "PromptSourceError")
+    source_exit = exception_return(source, "entrypoint", "UserError")
     staging_verdict = exception_return(source, "run", "UserError")
     if not isinstance(source_exit, int) or not isinstance(staging_verdict, str):
         return ["launcher prompt handlers do not expose fixed exit outcomes"]
     if staging_verdict not in exits:
         return [f"prompt staging returns unknown verdict {staging_verdict}"]
+    if not prompt_file_validation_precedes_allocation(source):
+        problems.append("initial prompt-file validation does not precede run allocation")
     source_claim = f"Initial `--prompt-file` path validation exits {source_exit}."
     staging_claim = (
         "Empty prompt input, stdin read failures, prompt storage failures, and Codex launch "
