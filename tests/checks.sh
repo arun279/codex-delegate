@@ -59,6 +59,19 @@ expect_diagnostic() { # expected-exit newline-separated-fixed-diagnostics label 
   fi
 }
 
+expect_diagnostic_without() { # expected-exit required forbidden label command...
+  local expected_rc=$1 required=$2 forbidden=$3 label=$4
+  shift 4
+  run_case "$@"
+  if [ "$CASE_RC" -eq "$expected_rc" ] && grep -Fq "$required" "$CASE_OUT" &&
+    ! grep -Fq "$forbidden" "$CASE_OUT"; then
+    ok "$label"
+  else
+    bad "$label (exit $CASE_RC, expected $expected_rc; required: $required; forbidden: $forbidden)" \
+      "$CASE_OUT"
+  fi
+}
+
 expect_silent_exit() { # expected-exit label command...
   local expected_rc=$1 label=$2
   shift 2
@@ -326,6 +339,67 @@ mutate_json "$RELEASE_ROOT/.claude-plugin/marketplace.json" owner.name '"Owner\u
 expect_diagnostic 1 "owner.name holds hidden character U+0001" \
   "marketplace owner.name rejects hidden control characters" \
   python3 "$RELEASE_ROOT/scripts/release-invariants.py" manifests
+
+for manifest_key in \
+  'package.json description' \
+  '.claude-plugin/plugin.json description' \
+  '.claude-plugin/marketplace.json plugins.0.description'; do
+  set -- $manifest_key
+  cp "$ROOT/package.json" "$RELEASE_ROOT/package.json"
+  cp "$ROOT/.claude-plugin/plugin.json" "$RELEASE_ROOT/.claude-plugin/plugin.json"
+  cp "$ROOT/.claude-plugin/marketplace.json" \
+    "$RELEASE_ROOT/.claude-plugin/marketplace.json"
+  remove_json_phrase "$RELEASE_ROOT/$1" "$2" \
+    'Uses your ChatGPT Codex allowance or API-billed usage. '
+  expect_diagnostic 1 "description omits account-funded usage" \
+    "$1 pins the account-funded usage disclosure" \
+    python3 "$RELEASE_ROOT/scripts/release-invariants.py" manifests
+done
+cp "$ROOT/package.json" "$RELEASE_ROOT/package.json"
+cp "$ROOT/.claude-plugin/plugin.json" "$RELEASE_ROOT/.claude-plugin/plugin.json"
+cp "$ROOT/.claude-plugin/marketplace.json" \
+  "$RELEASE_ROOT/.claude-plugin/marketplace.json"
+expect_silent_exit 0 \
+  "all unmodified description copies satisfy the manifest disclosures" \
+  python3 "$RELEASE_ROOT/scripts/release-invariants.py" manifests
+
+printf '\n== publication copy\n'
+PUBLICATION_ROOT=$WORK/publication-fixture
+mkdir -p "$PUBLICATION_ROOT"/{agents,commands,scripts,skills/routing}
+cp "$ROOT/scripts/release-invariants.py" \
+  "$PUBLICATION_ROOT/scripts/release-invariants.py"
+for publication_path in \
+  agents/runner.md \
+  commands/uninstall.md \
+  skills/routing/SKILL.md \
+  invalid.txt; do
+  printf '%s\n' 'plain publication copy' >"$PUBLICATION_ROOT/$publication_path"
+done
+git -C "$PUBLICATION_ROOT" init --quiet
+git -C "$PUBLICATION_ROOT" add .
+expect_diagnostic 0 "publication copy: PASS" \
+  "an unmodified publication copy passes" \
+  python3 "$PUBLICATION_ROOT/scripts/release-invariants.py" publication-copy
+
+for publication_path in \
+  agents/runner.md \
+  commands/uninstall.md \
+  skills/routing/SKILL.md; do
+  printf 'typographic \342\200\224 dash\n' >"$PUBLICATION_ROOT/$publication_path"
+  expect_diagnostic 1 "$publication_path:1 contains typographic dash U+2014" \
+    "$publication_path is covered by publication copy" \
+    python3 "$PUBLICATION_ROOT/scripts/release-invariants.py" publication-copy
+  printf '%s\n' 'plain publication copy' >"$PUBLICATION_ROOT/$publication_path"
+done
+
+printf '\377\376\n' >"$PUBLICATION_ROOT/invalid.txt"
+expect_diagnostic_without 1 "invalid.txt cannot be read as UTF-8:" "Traceback" \
+  "non-UTF-8 publication copy produces a clean diagnostic" \
+  python3 "$PUBLICATION_ROOT/scripts/release-invariants.py" publication-copy
+printf '%s\n' 'plain publication copy' >"$PUBLICATION_ROOT/invalid.txt"
+expect_diagnostic 0 "publication copy: PASS" \
+  "publication copy passes after every mutation is removed" \
+  python3 "$PUBLICATION_ROOT/scripts/release-invariants.py" publication-copy
 
 CLAIM_ROOT=$WORK/claim-fixture
 mkdir -p "$CLAIM_ROOT"/{agents,bin,commands,hooks,scripts} \

@@ -34,7 +34,7 @@ That returns at once with a harness output file path; call it `<OUTPUT_FILE>`. T
 
 The job now outlives every one of your turns except the last. A reply carrying no tool call ends this agent, and ending it kills the launcher, so until the job is over every reply is one Bash call and nothing else: no progress note, no summary, no explanation, however long it takes.
 
-Reply with this exact one-line call. Before the run ID exists, it treats a dead recorded launcher PID as terminal and allows 60 seconds for a PID record to appear. After the run ID exists, it waits on the advisory lock held on the launcher's `pid` artifact. It answers in one word, and its 110-second bound is below Bash's default timeout, so it never depends on a model-supplied timeout.
+Reply with this exact one-line call. Before the run ID exists, it treats a dead recorded launcher PID as terminal and allows 60 seconds for a PID record to appear. After the run ID exists, it waits on the advisory lock held on the launcher's `pid` artifact. It answers in one word, and its 110-second bound stays below Bash's default timeout as shipped.
 
 ```bash
 codex-delegate runner-wait "<OUTPUT_FILE>"

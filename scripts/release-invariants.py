@@ -67,7 +67,6 @@ CHANGELOG_PRODUCT_SURFACE = (
 )
 TYPOGRAPHIC_DASH = re.compile(r"[\u2010-\u2015]")
 PUBLICATION_COPY_EXCLUSIONS = {
-    "scripts/release-invariants.py",  # This rule names the characters it rejects.
     "tests/run.sh",  # Deliberate UTF-8 stream fixture.
 }
 
@@ -249,6 +248,8 @@ def strings_under(value: object) -> Iterator[str]:
 
 def manifest_check() -> int:
     market = load_object(ROOT / ".claude-plugin" / "marketplace.json")
+    plugin = load_object(ROOT / ".claude-plugin" / "plugin.json")
+    package = load_object(ROOT / "package.json")
     problems: list[str] = []
 
     raw_name = market.get("name", "")
@@ -296,7 +297,18 @@ def manifest_check() -> int:
     if len(set(string_names)) != len(string_names):
         problems.append(f"plugins repeats a name: {', '.join(string_names)}")
 
-    for entry in entries:
+    shipped_descriptions: list[tuple[str, str, bool]] = []
+    for path, manifest, has_hooks in (
+        ("package.json", package, False),
+        (".claude-plugin/plugin.json", plugin, True),
+    ):
+        raw_description = manifest.get("description", "")
+        description = raw_description if isinstance(raw_description, str) else ""
+        if not isinstance(raw_description, str):
+            problems.append(f"{path} description must be a string")
+        shipped_descriptions.append((path, description, has_hooks))
+
+    for index, entry in enumerate(entries):
         raw_label = entry.get("name", "<unnamed>")
         label = raw_label if isinstance(raw_label, str) else "<unnamed>"
         if not NAME.fullmatch(label):
@@ -329,10 +341,16 @@ def manifest_check() -> int:
         if description != description.strip():
             problems.append(f"{label} description has leading or trailing whitespace")
         if label == "codex-delegate":
-            for disclosure, pattern in DISCLOSURES.items():
-                if pattern.search(description) is None:
-                    problems.append(f"codex-delegate description omits {disclosure}")
+            shipped_descriptions.append((f"marketplace.json plugins[{index}]", description, True))
         hidden(problems, f"{label} description", description)
+
+    common_disclosures = {"OpenAI data egress", "account-funded usage"}
+    for label, description, has_hooks in shipped_descriptions:
+        for disclosure, pattern in DISCLOSURES.items():
+            if (has_hooks or disclosure in common_disclosures) and pattern.search(
+                description
+            ) is None:
+                problems.append(f"{label} description omits {disclosure}")
 
     for problem in problems:
         print(f"FAIL {problem}")
@@ -568,13 +586,6 @@ def changelog_check() -> int:
 def publication_copy_check() -> int:
     """Reject typographic dashes from the npm and repository-backed plugin payloads."""
     problems: list[str] = []
-    package = load_object(ROOT / "package.json")
-    raw_package_files = package.get("files")
-    if not isinstance(raw_package_files, list) or not all(
-        isinstance(item, str) for item in raw_package_files
-    ):
-        print("FAIL package.json files must be a list of paths")
-        return 1
     git = shutil.which("git")
     if git is None:
         print("FAIL cannot list tracked plugin payload: git is not installed")
@@ -589,17 +600,14 @@ def publication_copy_check() -> int:
         print(f"FAIL cannot list tracked plugin payload: {completed.stderr.decode().strip()}")
         return 1
     tracked = {item.decode() for item in completed.stdout.split(b"\0") if item}
-    package_specs = {cast(str, item).rstrip("/") for item in raw_package_files}
-    npm_payload = {"package.json"} | {
-        relative
-        for relative in tracked
-        if any(relative == spec or relative.startswith(f"{spec}/") for spec in package_specs)
-    }
-    shipped_copy = (tracked | npm_payload) - PUBLICATION_COPY_EXCLUSIONS
+    shipped_copy = tracked - PUBLICATION_COPY_EXCLUSIONS
     for relative in sorted(shipped_copy):
-        for line_number, line in enumerate(
-            (ROOT / relative).read_text(encoding="utf-8").splitlines(), start=1
-        ):
+        try:
+            lines = (ROOT / relative).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as error:
+            problems.append(f"{relative} cannot be read as UTF-8: {error}")
+            continue
+        for line_number, line in enumerate(lines, start=1):
             if match := TYPOGRAPHIC_DASH.search(line):
                 problems.append(
                     f"{relative}:{line_number} contains typographic dash U+{ord(match.group()):04X}"

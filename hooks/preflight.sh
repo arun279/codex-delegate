@@ -54,6 +54,8 @@ if [ -z "$plugin_root" ]; then
   add "CLAUDE_PLUGIN_ROOT is empty, so the SessionStart hook cannot locate the shipped codex-delegate launcher. Reinstall or re-enable the plugin, then open a new session."
 else
   shipped=$plugin_root/bin/codex-delegate
+  # The interpreter line is probed verbatim above; -x covers its executable bit. SessionStart
+  # deliberately avoids spawning the launcher, so only argument parsing is unexercised.
   if [ ! -f "$shipped" ] || [ ! -x "$shipped" ]; then
     add "The shipped codex-delegate launcher at $(esc "$shipped") is missing or not executable. Reinstall or re-enable the plugin, then open a new session."
   else
