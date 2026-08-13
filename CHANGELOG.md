@@ -49,10 +49,10 @@ No version of this project has been published. The first release number remains 
   <!-- evidence: bin/codex-delegate :: def runner_wait(output_path: str) -->
 - Enforced the deadline during prompt ingestion and while Codex keeps stdout productive, where it previously did neither.
   <!-- evidence: bin/codex-delegate :: class PromptDeadline -->
-- Kept draining Codex stdout through a bounded post-terminal settlement, so an intact native final-output document is no longer lost.
-  <!-- evidence: tests/lifecycle.sh :: post-terminal settlement keeps draining -->
-- Published a terminal status record for a prompt failure that happens after the run directory is allocated.
-  <!-- evidence: tests/run.sh :: a missing prompt file records a terminal validation failure before Codex starts -->
+- Kept draining Codex stdout through the full bounded post-terminal settlement, so a late native final-output document is still collected.
+  <!-- evidence: tests/run.sh :: a native document arriving one second after the terminal event is collected -->
+- Validated the initial prompt-file path before allocating a run or publishing a status record.
+  <!-- evidence: tests/run.sh :: a missing prompt file fails validation before allocating a run -->
 - Coupled the documented prompt-file validation exit to the launcher's actual return path.
   <!-- evidence: README.md :: path validation exits 2 -->
 
