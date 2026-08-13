@@ -139,7 +139,7 @@ See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete bou
 
 ## Requirements
 
-This project supports macOS only, both the Claude Code plugin and the standalone launcher. The launcher requires `codex` and `python3` on `PATH`, `/usr/bin/env` with `-S` support, and a Python runtime that starts with both `-I` and `-S`. If those isolation flags are not active, the launcher prints a diagnostic and exits 2. Verify the Codex CLI and sign-in before the first run:
+This project supports macOS only, both the Claude Code plugin and the standalone launcher. The launcher requires `codex` and `python3` on `PATH`, `/usr/bin/env` with `-S` support, and a Python runtime that starts with both `-I` and `-S`. The minimum verified Codex CLI version is 0.146.1; check it with `codex --version`. If the Python isolation flags are not active, the launcher prints a diagnostic and exits 2. Verify the Codex CLI and sign-in before the first run:
 
 ```bash
 codex --version

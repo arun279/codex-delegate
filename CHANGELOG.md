@@ -10,6 +10,9 @@ No version of this project has been published. The first release number remains 
 
 ### Added
 
+- Added a non-blocking session-start check that warns when the installed Codex CLI is below the minimum verified version.
+  <!-- evidence: tests/checks.sh :: a Codex CLI below the verified floor produces a warning -->
+
 - Added private process-group isolation for each Codex turn.
   <!-- evidence: bin/codex-delegate :: start_new_session=True -->
 - Added terminal-event capture that ends a process which does not exit by itself.
@@ -40,6 +43,8 @@ No version of this project has been published. The first release number remains 
 
 ### Fixed
 
+- Allowed fully explicit model-effort runs to continue with a warning when the live model catalog is unavailable.
+  <!-- evidence: tests/run.sh :: an explicit pair proceeds with one warning when the catalog is unavailable -->
 - Ended a pre-run-ID wait on a dead recorded launcher or a bounded startup grace, instead of on elapsed time.
   <!-- evidence: bin/codex-delegate :: def runner_wait(output_path: str) -->
 - Enforced the deadline during prompt ingestion and while Codex keeps stdout productive, where it previously did neither.

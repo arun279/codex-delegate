@@ -158,35 +158,47 @@ isolation_mutation_check() {
 
 preflight_does_not_spawn_launcher() {
   rm -f "$PREFLIGHT_MARKER"
-  env PATH="$PREFLIGHT_PLUGIN_ROOT/bin:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  env PATH="$PREFLIGHT_PLUGIN_ROOT/bin:$PREFLIGHT_CODEX_PATH:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
     PREFLIGHT_MARKER="$PREFLIGHT_MARKER" CLAUDE_PLUGIN_ROOT="$PREFLIGHT_PLUGIN_ROOT" \
     sh "$ROOT/hooks/preflight.sh" || return
   [ ! -e "$PREFLIGHT_MARKER" ]
 }
 
+bounded_preflight_version_probe() {
+  local started=$SECONDS
+  env PATH="$PREFLIGHT_VERSION_PATH:/usr/bin:/bin:/usr/sbin:/sbin" \
+    CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
+  [ $((SECONDS - started)) -lt 6 ]
+}
+
 printf '\n== preflight launcher reachability\n'
+PREFLIGHT_CODEX_PATH=$WORK/preflight-codex
+mkdir -p "$PREFLIGHT_CODEX_PATH"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "codex-cli 0.146.1"' \
+  >"$PREFLIGHT_CODEX_PATH/codex"
+chmod 700 "$PREFLIGHT_CODEX_PATH/codex"
 expect_silent_exit 0 \
   "the shipped launcher passes by absolute path without plugin bin on hook PATH" \
-  env PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  env PATH="$PREFLIGHT_CODEX_PATH:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
   CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
 
 expect_diagnostic 0 "CLAUDE_PLUGIN_ROOT is empty" \
   "an empty plugin root produces a preflight diagnostic" \
-  env PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  env PATH="$PREFLIGHT_CODEX_PATH:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
   CLAUDE_PLUGIN_ROOT= sh "$ROOT/hooks/preflight.sh"
 
 MISSING_PLUGIN_ROOT=$WORK/missing-plugin
 mkdir -p "$MISSING_PLUGIN_ROOT/bin"
 expect_diagnostic 0 "is missing or not executable" \
   "a missing shipped launcher produces a preflight diagnostic" \
-  env PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  env PATH="$PREFLIGHT_CODEX_PATH:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
   CLAUDE_PLUGIN_ROOT="$MISSING_PLUGIN_ROOT" sh "$ROOT/hooks/preflight.sh"
 
 DIRECTORY_PLUGIN_ROOT=$WORK/directory-plugin
 mkdir -p "$DIRECTORY_PLUGIN_ROOT/bin/codex-delegate"
 expect_diagnostic 0 "is missing or not executable" \
   "a directory at the shipped launcher path produces a preflight diagnostic" \
-  env PATH="$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  env PATH="$PREFLIGHT_CODEX_PATH:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
   CLAUDE_PLUGIN_ROOT="$DIRECTORY_PLUGIN_ROOT" sh "$ROOT/hooks/preflight.sh"
 
 BROKEN_PLUGIN_ROOT=$WORK/broken-plugin
@@ -195,7 +207,7 @@ printf '%s\n' '#!/bin/sh' 'exit 42' >"$BROKEN_PLUGIN_ROOT/bin/codex-delegate"
 chmod 700 "$BROKEN_PLUGIN_ROOT/bin/codex-delegate"
 expect_diagnostic 0 $'Unsafe codex-delegate PATH mismatch\nIf you intend to use the separate copy instead, disable this plugin.' \
   "a different codex-delegate earlier on PATH produces a preflight diagnostic" \
-  env PATH="$BROKEN_PLUGIN_ROOT/bin:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
+  env PATH="$BROKEN_PLUGIN_ROOT/bin:$PREFLIGHT_CODEX_PATH:$ROOT/tests/stub:/usr/bin:/bin:/usr/sbin:/sbin" \
   CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
 
 PREFLIGHT_PLUGIN_ROOT=$WORK/preflight-plugin
@@ -207,6 +219,44 @@ chmod 700 "$PREFLIGHT_PLUGIN_ROOT/bin/codex-delegate"
 expect_silent_exit 0 \
   "SessionStart inspects but does not spawn the shipped launcher" \
   preflight_does_not_spawn_launcher
+
+printf '\n== preflight Codex CLI version\n'
+PREFLIGHT_VERSION_PATH=$WORK/preflight-version
+mkdir -p "$PREFLIGHT_VERSION_PATH"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "codex-cli 0.145.0"' \
+  >"$PREFLIGHT_VERSION_PATH/codex"
+chmod 700 "$PREFLIGHT_VERSION_PATH/codex"
+expect_diagnostic 0 "Codex CLI version 0.145.0 is below the required minimum 0.146.1" \
+  "a Codex CLI below the verified floor produces a warning" \
+  env PATH="$PREFLIGHT_VERSION_PATH:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
+
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "codex-cli 0.146.1"' \
+  >"$PREFLIGHT_VERSION_PATH/codex"
+expect_silent_exit 0 \
+  "the current verified Codex CLI version produces no warning" \
+  env PATH="$PREFLIGHT_VERSION_PATH:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
+
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "codex-cli 0.148.0-alpha.9"' \
+  >"$PREFLIGHT_VERSION_PATH/codex"
+expect_silent_exit 0 \
+  "a prerelease Codex CLI above the floor produces no warning" \
+  env PATH="$PREFLIGHT_VERSION_PATH:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
+
+printf '%s\n' '#!/bin/sh' 'exit 1' >"$PREFLIGHT_VERSION_PATH/codex"
+expect_diagnostic 0 "Note: codex --version did not answer successfully" \
+  "a failing Codex CLI version probe is non-blocking" \
+  env PATH="$PREFLIGHT_VERSION_PATH:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CLAUDE_PLUGIN_ROOT="$ROOT" sh "$ROOT/hooks/preflight.sh"
+
+printf '%s\n' '#!/usr/bin/python3' 'import subprocess' \
+  'raise SystemExit(subprocess.run(["/bin/sleep", "10"]).returncode)' \
+  >"$PREFLIGHT_VERSION_PATH/codex"
+expect_diagnostic 0 "Note: codex --version did not answer successfully" \
+  "a wrapper with a hanging child is bounded and non-blocking" \
+  bounded_preflight_version_probe
 
 printf '\n== privacy representations\n'
 MAC_USERS_SEGMENT=Users
