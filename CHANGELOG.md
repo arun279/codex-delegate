@@ -29,6 +29,9 @@ No version of this project has been published, so every entry below stays under 
 
 ### Changed
 
+- Reformatted the source to a 150-column line length with no behavioural change.
+  <!-- evidence: pyproject.toml :: line-length = 150 -->
+
 - Clarified delegated account usage, release prerequisites, runner timing, and shipped hook behavior.
   <!-- evidence: skills/routing/SKILL.md :: The plugin supplies no shared or sponsored capacity. -->
 - Split concise package and marketplace listing cards from the complete disclosures in the documentation.
