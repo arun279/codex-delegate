@@ -26,21 +26,117 @@ import subprocess
 import time
 from pathlib import Path
 from types import FrameType
-from typing import BinaryIO, TypedDict, cast
+from typing import BinaryIO, Callable, NamedTuple, TypedDict, Union, cast
 
 PROGRAM = "codex-delegate"
-DEFAULT_DEADLINE = 7200
 MAX_DEADLINE = 12960
 RUNNER_WAIT_SECONDS = 110
 RUNNER_STARTUP_SECONDS = 60
-EVENT_LIMIT = 16 * 1024 * 1024
-LINE_LIMIT = 1024 * 1024
-READ_BATCH = 32
-TERMINAL_SETTLE_LIMIT_SECONDS = 2.5
-RUN_KEEP_LIMIT = 100
 CACHEDIR_TAG = b"Signature: 8a477f597d28d172789f06886806bc55\n"
 RUN_MARKER_NAME = ".codex-delegate-run"
 RUN_MARKER = b"codex-delegate run directory\n"
+
+
+class FixedNumber(NamedTuple):
+    value: int
+    reason: str
+
+
+DELIBERATELY_FIXED = {
+    "MIN_DEADLINE": FixedNumber(
+        1, "The minimum deadline stays fixed because the public runner contract promises it."
+    ),
+    "MAX_DEADLINE": FixedNumber(
+        MAX_DEADLINE,
+        "The maximum deadline stays fixed because the public runner contract promises it.",
+    ),
+}
+
+Number = Union[int, float]
+NumberParser = Callable[[str], Number]
+
+
+def parse_integer(raw: str) -> Number:
+    return int(raw)
+
+
+def parse_number(raw: str) -> Number:
+    return float(raw)
+
+
+class TunableSpec(NamedTuple):
+    environment: str
+    default: Number
+    parser: NumberParser
+    lower: Number
+    upper: Number
+    cli_flag: bool
+    command: str
+
+
+TUNABLES = {
+    "DEADLINE": TunableSpec(
+        "CODEX_DELEGATE_DEADLINE",
+        7200,
+        parse_integer,
+        DELIBERATELY_FIXED["MIN_DEADLINE"].value,
+        DELIBERATELY_FIXED["MAX_DEADLINE"].value,
+        True,
+        "run",
+    ),
+    "RUNNER_WAIT_SECONDS": TunableSpec(
+        "CODEX_DELEGATE_RUNNER_WAIT_SECONDS",
+        RUNNER_WAIT_SECONDS,
+        parse_integer,
+        110,
+        119,
+        False,
+        "runner-wait",
+    ),
+    "RUNNER_STARTUP_SECONDS": TunableSpec(
+        "CODEX_DELEGATE_RUNNER_STARTUP_SECONDS",
+        RUNNER_STARTUP_SECONDS,
+        parse_integer,
+        1,
+        118,
+        False,
+        "runner-wait",
+    ),
+    "EVENT_LIMIT": TunableSpec(
+        "CODEX_DELEGATE_EVENT_LIMIT",
+        16 * 1024 * 1024,
+        parse_integer,
+        1024,
+        1024 * 1024 * 1024,
+        False,
+        "run",
+    ),
+    "LINE_LIMIT": TunableSpec(
+        "CODEX_DELEGATE_LINE_LIMIT", 1024 * 1024, parse_integer, 256, 64 * 1024 * 1024, False, "run"
+    ),
+    "READ_BATCH": TunableSpec(
+        "CODEX_DELEGATE_READ_BATCH", 32, parse_integer, 1, 4096, False, "run"
+    ),
+    "TERMINAL_SETTLE_LIMIT_SECONDS": TunableSpec(
+        "CODEX_DELEGATE_TERMINAL_SETTLE_LIMIT_SECONDS", 2.5, parse_number, 0.0, 60.0, False, "run"
+    ),
+    "RUN_KEEP_LIMIT": TunableSpec(
+        "CODEX_DELEGATE_RUN_KEEP_LIMIT", 100, parse_integer, 0, 1000000, False, "run"
+    ),
+}
+
+
+def tunables_for(command: str) -> frozenset[str]:
+    return frozenset(name for name, spec in TUNABLES.items() if spec.command == command)
+
+
+# CODEX_DELEGATE_HOME relocates the store rather than tuning behaviour; the two TEST names are
+# suite-only hooks gated on CODEX_DELEGATE_TEST_BIN matching the running binary.
+NON_TUNABLE_ENVIRONMENT = (
+    "CODEX_DELEGATE_HOME",
+    "CODEX_DELEGATE_TEST_BIN",
+    "CODEX_DELEGATE_TEST_KEEP_LIMIT",
+)
 RUNNER_PID_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_PID=([1-9][0-9]*)\n\Z")
 RUNNER_RUNID_RECORD = re.compile(rb"CODEX_DELEGATE_RUNID=(runner-[0-9a-f]{32})\n\Z")
 RUNNER_END_RECORD = re.compile(rb"CODEX_DELEGATE_LAUNCHER_ENDED=([1-9][0-9]*)\n\Z")
@@ -69,6 +165,7 @@ class Arguments(argparse.Namespace):
     schema: str | None
     model: str | None
     effort: str | None
+    deadline_raw: str | None
     deadline: int
     runid: str | None
     runner_handoff: bool
@@ -132,14 +229,65 @@ class PromptStopped(Exception):
         self.number = number
 
 
-def positive_deadline(raw: str) -> int:
-    try:
-        value = int(raw)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("must be a positive integer") from error
-    if value < 1 or value > MAX_DEADLINE:
-        raise argparse.ArgumentTypeError(f"must be between 1 and {MAX_DEADLINE}")
-    return value
+class ResolvedTunables(NamedTuple):
+    deadline: int
+    runner_wait_seconds: int
+    runner_startup_seconds: int
+    event_limit: int
+    line_limit: int
+    read_batch: int
+    terminal_settle_limit_seconds: float
+    run_keep_limit: int
+
+
+def resolve_tunables(cli_values: dict[str, str | None], active: frozenset[str]) -> ResolvedTunables:
+    resolved: dict[str, Number] = {}
+    for name, spec in TUNABLES.items():
+        cli_raw = cli_values.get(name) if name in active and spec.cli_flag else None
+        raw = (
+            cli_raw
+            if cli_raw is not None
+            else os.environ.get(spec.environment)
+            if name in active
+            else None
+        )
+        received = raw if raw is not None else str(spec.default)
+        kind = "an integer" if spec.parser is parse_integer else "a number"
+        try:
+            value = spec.parser(received)
+        except (ValueError, OverflowError) as error:
+            raise UserError(
+                f"{spec.environment} received {received!r}; must be {kind} "
+                f"between {spec.lower} and {spec.upper}"
+            ) from error
+        if not spec.lower <= value <= spec.upper:
+            raise UserError(
+                f"{spec.environment} received {received!r}; must be {kind} "
+                f"between {spec.lower} and {spec.upper}"
+            )
+        resolved[name] = value
+    if (
+        "RUNNER_WAIT_SECONDS" in active
+        and "RUNNER_STARTUP_SECONDS" in active
+        and resolved["RUNNER_STARTUP_SECONDS"] >= resolved["RUNNER_WAIT_SECONDS"]
+    ):
+        startup_spec = TUNABLES["RUNNER_STARTUP_SECONDS"]
+        raise UserError(
+            f"{startup_spec.environment} received "
+            f"{str(resolved['RUNNER_STARTUP_SECONDS'])!r}; must be less than "
+            f"CODEX_DELEGATE_RUNNER_WAIT_SECONDS "
+            f"({resolved['RUNNER_WAIT_SECONDS']})"
+        )
+    return ResolvedTunables(
+        cast(int, resolved["DEADLINE"]),
+        cast(int, resolved["RUNNER_WAIT_SECONDS"]),
+        cast(int, resolved["RUNNER_STARTUP_SECONDS"]),
+        cast(int, resolved["EVENT_LIMIT"]),
+        cast(int, resolved["LINE_LIMIT"]),
+        cast(int, resolved["READ_BATCH"]),
+        cast(float, resolved["TERMINAL_SETTLE_LIMIT_SECONDS"]),
+        cast(int, resolved["RUN_KEEP_LIMIT"]),
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -167,7 +315,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--schema")
     run.add_argument("--model")
     run.add_argument("--effort")
-    run.add_argument("--deadline", type=positive_deadline, default=DEFAULT_DEADLINE)
+    run.add_argument("--deadline", dest="deadline_raw")
     run.add_argument("--runid")
     run.add_argument("--runner-handoff", action="store_true", help=argparse.SUPPRESS)
     commands.add_parser("models", help="show the live model and effort catalog")
@@ -455,17 +603,17 @@ def pid_lock_released(path: str) -> bool | None:
         os.close(descriptor)
 
 
-def retention_limit() -> int:
+def retention_limit(resolved: int) -> int:
     test_bin = os.environ.get("CODEX_DELEGATE_TEST_BIN")
     if test_bin is None or os.path.realpath(test_bin) != os.path.realpath(sys.argv[0]):
-        return RUN_KEEP_LIMIT
+        return resolved
     raw = os.environ.get("CODEX_DELEGATE_TEST_KEEP_LIMIT")
     if raw is None:
-        return RUN_KEEP_LIMIT
+        return resolved
     try:
         return max(0, int(raw))
     except ValueError:
-        return RUN_KEEP_LIMIT
+        return resolved
 
 
 def proven_marker_mtime(root: str, candidate: str) -> int | None:
@@ -496,7 +644,7 @@ def proven_marker_mtime(root: str, candidate: str) -> int | None:
         os.close(descriptor)
 
 
-def prune_runs(root: str) -> None:
+def prune_runs(root: str, limit: int) -> None:
     proven: list[tuple[int, str]] = []
     try:
         with os.scandir(root) as entries:
@@ -508,7 +656,7 @@ def prune_runs(root: str) -> None:
     except OSError:
         return
     proven.sort(key=lambda item: (item[0], item[1]))
-    excess = len(proven) - retention_limit()
+    excess = len(proven) - limit
     for _mtime, path in proven[: max(0, excess)]:
         try:
             shutil.rmtree(path)
@@ -516,10 +664,10 @@ def prune_runs(root: str) -> None:
             pass
 
 
-def runner_wait(output_path: str) -> int:
+def runner_wait(output_path: str, tunables: ResolvedTunables) -> int:
     started = time.monotonic()
-    until = started + RUNNER_WAIT_SECONDS
-    startup_until = started + RUNNER_STARTUP_SECONDS
+    until = started + tunables.runner_wait_seconds
+    startup_until = started + tunables.runner_startup_seconds
     while True:
         pid, runid, ended = runner_records(output_path)
         if runid is None:
@@ -759,8 +907,11 @@ def codex_argv(
 
 
 class Capture:
-    def __init__(self, output: BinaryIO) -> None:
+    def __init__(self, output: BinaryIO, tunables: ResolvedTunables) -> None:
         self.output = output
+        self.event_limit = tunables.event_limit
+        self.line_limit = tunables.line_limit
+        self.read_batch = tunables.read_batch
         self.bytes_written = 0
         self.buffer = b""
         self.drop_line = False
@@ -813,7 +964,7 @@ class Capture:
                 self.failure_message = error["message"][:1000]
 
     def feed(self, chunk: bytes) -> None:
-        remaining = EVENT_LIMIT - self.bytes_written
+        remaining = self.event_limit - self.bytes_written
         if remaining > 0 and not self.write_failed:
             stored = chunk[:remaining]
             try:
@@ -839,7 +990,7 @@ class Capture:
         while b"\n" in self.buffer:
             raw, self.buffer = self.buffer.split(b"\n", 1)
             self.consume_line(raw.rstrip(b"\r"))
-        if len(self.buffer) > LINE_LIMIT:
+        if len(self.buffer) > self.line_limit:
             self.mark_error("event_record_too_large")
             self.buffer = b""
             self.drop_line = True
@@ -874,7 +1025,7 @@ def signal_group(pgid: int, number: int) -> None:
 
 
 def read_pipe(fd: int, capture: Capture) -> bool:
-    for _ in range(READ_BATCH):
+    for _ in range(capture.read_batch):
         try:
             chunk = os.read(fd, 65536)
         except BlockingIOError:
@@ -959,10 +1110,12 @@ def print_result(final_path: str, status: Status) -> None:
         discard_stdout_error()
 
 
-def publish_result(root: str, final_path: str, status_path: str, status: Status) -> None:
+def publish_result(
+    root: str, final_path: str, status_path: str, status: Status, keep_limit: int
+) -> None:
     atomic_status(status_path, status)
     print_result(final_path, status)
-    prune_runs(root)
+    prune_runs(root, retention_limit(keep_limit))
 
 
 def status_for(
@@ -998,7 +1151,7 @@ def status_for(
     }
 
 
-def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
+def run(args: Arguments, codex: str, models: list[Model] | None, tunables: ResolvedTunables) -> int:
     if args.network and args.sandbox != "workspace-write":
         raise UserError("--network requires --sandbox workspace-write")
     cwd = canonical_dir(args.cwd, "--cwd")
@@ -1058,7 +1211,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
             None,
             None,
         )
-        publish_result(root, final_path, status_path, status)
+        publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
         return 128 + error.number
     except PromptDeadline:
         status = status_for(
@@ -1071,7 +1224,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
             None,
             None,
         )
-        publish_result(root, final_path, status_path, status)
+        publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
         return EXIT["DEADLINE"]
     except UserError as error:
         print(f"{PROGRAM}: {error}", file=sys.stderr)
@@ -1085,7 +1238,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
             None,
             None,
         )
-        publish_result(root, final_path, status_path, status)
+        publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
         return EXIT["LAUNCH_ERROR"]
 
     command = codex_argv(codex, args, model, effort, final_path, cwd, add_dirs, schema)
@@ -1094,7 +1247,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
         open(events_path, "xb", buffering=0) as events,
         open(stderr_path, "xb") as stderr,
     ):
-        capture = Capture(events)
+        capture = Capture(events, tunables)
         try:
             process = subprocess.Popen(  # noqa: S603 -- Run the constructed Codex argv, no shell.
                 command,
@@ -1118,7 +1271,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
                 None,
                 None,
             )
-            publish_result(root, final_path, status_path, status)
+            publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
             return EXIT["LAUNCH_ERROR"]
 
         fd = cast(BinaryIO, process.stdout).fileno()
@@ -1153,7 +1306,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
                     waiting = False
 
             if outcome == "terminal":
-                settle_until = time.monotonic() + TERMINAL_SETTLE_LIMIT_SECONDS
+                settle_until = time.monotonic() + tunables.terminal_settle_limit_seconds
                 while process.poll() is None:
                     now = time.monotonic()
                     if now >= settle_until:
@@ -1232,7 +1385,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None) -> int:
         capture.terminal,
         capture.usage,
     )
-    publish_result(root, final_path, status_path, status)
+    publish_result(root, final_path, status_path, status, tunables.run_keep_limit)
     return code
 
 
@@ -1247,12 +1400,20 @@ def main() -> int:
     if sys.argv[1:2] == ["runner-wait"]:
         if len(sys.argv) != 3:
             raise UserError("runner-wait requires exactly one harness output file")
-        return runner_wait(sys.argv[2])
+        return runner_wait(
+            sys.argv[2],
+            resolve_tunables({}, tunables_for("runner-wait")),
+        )
     if sys.argv[1:2] == ["runner-report"]:
         if len(sys.argv) != 3:
             raise UserError("runner-report requires exactly one harness output file")
         return runner_report(sys.argv[2])
     args = parser().parse_args(namespace=Arguments())
+    cli_values = {"DEADLINE": args.deadline_raw} if args.command == "run" else {}
+    active = tunables_for(args.command)
+    tunables = resolve_tunables(cli_values, active)
+    if args.command == "run":
+        args.deadline = tunables.deadline
     if args.command == "run" and args.runner_handoff and args.runid is not None:
         raise UserError("--runner-handoff cannot be combined with --runid")
     codex = shutil.which("codex")
@@ -1275,7 +1436,7 @@ def main() -> int:
             file=sys.stderr,
         )
         models = None
-    return run(args, codex, models)
+    return run(args, codex, models, tunables)
 
 
 def entrypoint() -> int:

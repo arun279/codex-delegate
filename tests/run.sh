@@ -130,8 +130,58 @@ check '[ "$RC" = 2 ] && grep -q -- "--prompt-stdin" "$WORK/no-prompt.out"' \
 "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --deadline 0 \
   >"$WORK/deadline.out" 2>&1
 RC=$?
-check '[ "$RC" = 2 ] && grep -q "between 1 and 12960" "$WORK/deadline.out"' \
+check '[ "$RC" = 2 ] && grep -q "CODEX_DELEGATE_DEADLINE received .0." "$WORK/deadline.out" &&
+       grep -q "between 1 and 12960" "$WORK/deadline.out"' \
   "deadline validation is bounded"
+unset CODEX_DELEGATE_DEADLINE
+"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --cwd "$WORK/job" \
+  --model stub-model-a --effort medium --runid tunable-default \
+  >"$WORK/tunable-default.out" 2>"$WORK/tunable-default.err"
+RC=$?
+check '[ "$RC" = 0 ] &&
+       [ "$(json_ "$WORK/runs/tunable-default/status.json" deadline_s)" = 7200 ]' \
+  "an unset tunable uses its table default"
+CODEX_DELEGATE_DEADLINE=9 "$BIN" run --prompt-file "$WORK/prompt.txt" \
+  --sandbox read-only --cwd "$WORK/job" --model stub-model-a --effort medium \
+  --runid tunable-environment >"$WORK/tunable-environment.out" 2>"$WORK/tunable-environment.err"
+RC=$?
+check '[ "$RC" = 0 ] &&
+       [ "$(json_ "$WORK/runs/tunable-environment/status.json" deadline_s)" = 9 ]' \
+  "a valid environment override takes effect"
+CODEX_DELEGATE_DEADLINE=9 "$BIN" run --prompt-file "$WORK/prompt.txt" \
+  --sandbox read-only --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
+  --runid tunable-cli >"$WORK/tunable-cli.out" 2>"$WORK/tunable-cli.err"
+RC=$?
+check '[ "$RC" = 0 ] &&
+       [ "$(json_ "$WORK/runs/tunable-cli/status.json" deadline_s)" = 10 ]' \
+  "the deadline flag wins over its environment variable"
+CODEX_DELEGATE_DEADLINE=0 "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
+  >"$WORK/tunable-bad-environment.out" 2>&1
+ENV_RC=$?
+unset CODEX_DELEGATE_DEADLINE
+"$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --deadline 0 \
+  >"$WORK/tunable-bad-flag.out" 2>&1
+FLAG_RC=$?
+check '[ "$ENV_RC" = 2 ] && [ "$FLAG_RC" = 2 ] &&
+       cmp -s "$WORK/tunable-bad-environment.out" "$WORK/tunable-bad-flag.out" &&
+       grep -q "CODEX_DELEGATE_DEADLINE received .0." "$WORK/tunable-bad-environment.out"' \
+  "environment and flag values share validation and diagnostics"
+printf 'CODEX_DELEGATE_LAUNCHER_PID=2147483647\n' >"$WORK/runner-ended.out"
+CODEX_DELEGATE_READ_BATCH=bogus "$BIN" runner-wait "$WORK/runner-ended.out" \
+  >"$WORK/runner-scoped.out" 2>"$WORK/runner-scoped.err"
+RC=$?
+check '[ "$RC" = 0 ] && [ "$(cat "$WORK/runner-scoped.out")" = ENDED ] &&
+       [ ! -s "$WORK/runner-scoped.err" ]' \
+  "runner-wait ignores invalid environment values for unrelated tunables"
+CODEX_DELEGATE_RUNNER_WAIT_SECONDS=110 CODEX_DELEGATE_RUNNER_STARTUP_SECONDS=110 \
+  "$BIN" runner-wait "$WORK/runner-ended.out" >"$WORK/runner-inverted.out" 2>&1
+RC=$?
+check '[ "$RC" = 2 ] &&
+       grep -q "CODEX_DELEGATE_RUNNER_STARTUP_SECONDS received .110." \
+         "$WORK/runner-inverted.out" &&
+       grep -q "must be less than CODEX_DELEGATE_RUNNER_WAIT_SECONDS" \
+         "$WORK/runner-inverted.out"' \
+  "runner startup grace must fit inside the runner wait bound"
 "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only --network \
   >"$WORK/network.out" 2>&1
 RC=$?

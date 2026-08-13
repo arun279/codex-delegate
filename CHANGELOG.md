@@ -12,6 +12,9 @@ No version of this project has been published, so every entry below stays under 
 
 - Added ownership-proven retention that keeps the newest 100 inactive runs while never automatically removing live or unproven directories.
   <!-- evidence: tests/run.sh :: limit zero silently preserves every unproven directory and directory symlink -->
+- Added bounded environment overrides for launcher timing and buffering tunables, with command-line deadline precedence.
+  <!-- evidence: tests/run.sh :: the deadline flag wins over its environment variable -->
+
 - Added a non-blocking session-start check that warns when the installed Codex CLI is below the minimum verified version.
   <!-- evidence: tests/checks.sh :: a Codex CLI below the verified floor produces a warning -->
 
@@ -48,7 +51,7 @@ No version of this project has been published, so every entry below stays under 
 - Allowed fully explicit model-effort runs to continue with a warning when the live model catalog is unavailable.
   <!-- evidence: tests/run.sh :: an explicit pair proceeds with one warning when the catalog is unavailable -->
 - Ended a pre-run-ID wait on a dead recorded launcher or a bounded startup grace, instead of on elapsed time.
-  <!-- evidence: bin/codex-delegate :: def runner_wait(output_path: str) -->
+  <!-- evidence: bin/codex-delegate :: def runner_wait(output_path: str, tunables: ResolvedTunables) -->
 - Enforced the deadline during prompt ingestion and while Codex keeps stdout productive, where it previously did neither.
   <!-- evidence: bin/codex-delegate :: class PromptDeadline -->
 - Kept draining Codex stdout through the full bounded post-terminal settlement, so a late native final-output document is still collected.
