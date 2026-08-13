@@ -18,6 +18,7 @@ The selected sandbox bounds local access:
 
 Each run stores owner-only artifacts under `~/.codex-delegate/<runid>/`:
 
+- `.codex-delegate-run`, the ownership marker used for retention;
 - `pid`, the launcher's process id and advisory-lock wait handle;
 - `prompt.txt`, containing the complete prompt;
 - `events.jsonl`, containing the bounded Codex JSON event stream;
@@ -27,7 +28,7 @@ Each run stores owner-only artifacts under `~/.codex-delegate/<runid>/`:
 
 The prompt reaches the Codex child through stdin and is not part of its process arguments. The runner constructs that stdin with a caller-shell heredoc, so same-user process inspection can still expose the shell command while it runs. This is not an end-to-end secrecy guarantee.
 
-Artifacts remain until the user removes them or runs `/codex-delegate:uninstall`; there is no background pruning process. The launcher refuses a symlinked or differently owned run root, forces mode `0700`, and rejects writable-root overlap for `workspace-write`.
+After a run reaches terminal status, the launcher retains the newest 100 inactive directories with a proven ownership marker and removes older proven runs, oldest marker mtime first. It never automatically removes a live run, an unmarked directory, a directory with a wrong, symlinked, non-regular, or foreign-owned marker, the run root itself, or anything outside that root. Pruning is best-effort and never changes a run result. There is no background pruning process; the user can still remove all artifacts or run `/codex-delegate:uninstall`. A launcher-created run root carries the standard `CACHEDIR.TAG` for backup tools. The launcher refuses a symlinked or differently owned run root, forces mode `0700`, and rejects writable-root overlap for `workspace-write`.
 
 The plugin does not install a persistent Bash allow rule. Older releases could add `Bash(codex-delegate:*)` to user settings; upgrading does not silently remove that user-controlled entry.
 

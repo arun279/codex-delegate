@@ -10,6 +10,8 @@ No version of this project has been published, so every entry below stays under 
 
 ### Added
 
+- Added ownership-proven retention that keeps the newest 100 inactive runs while never automatically removing live or unproven directories.
+  <!-- evidence: tests/run.sh :: limit zero silently preserves every unproven directory and directory symlink -->
 - Added a non-blocking session-start check that warns when the installed Codex CLI is below the minimum verified version.
   <!-- evidence: tests/checks.sh :: a Codex CLI below the verified floor produces a warning -->
 
