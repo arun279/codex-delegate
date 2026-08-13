@@ -63,7 +63,8 @@ if unclassified:
     raise SystemExit(f"unclassified numeric constants: {sorted(unclassified)}")
 
 specs = assigned("TUNABLES")
-assert isinstance(specs, ast.Dict)
+if not isinstance(specs, ast.Dict):
+    raise SystemExit("TUNABLES is not a literal table")
 configured_environment = set()
 for key, value in zip(specs.keys, specs.values):
     if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
