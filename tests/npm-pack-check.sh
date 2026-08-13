@@ -14,14 +14,24 @@ for file in CHANGELOG.md LICENSE PRIVACY.md README.md SECURITY.md; do
   printf 'fixture\n' >"$FIXTURE/$file" || exit 2
 done
 printf '#!/bin/sh\n' >"$FIXTURE/bin/codex-delegate" || exit 2
-printf 'unexpected fixture file\n' >"$FIXTURE/NOTICE" || exit 2
 printf '%s\n' \
   '{' \
   '  "name": "npm-pack-check-fixture",' \
   '  "version": "1.0.0",' \
-  '  "files": ["bin/codex-delegate", "CHANGELOG.md", "PRIVACY.md", "SECURITY.md", "NOTICE"]' \
+  '  "files": ["bin/codex-delegate", "CHANGELOG.md", "PRIVACY.md", "SECURITY.md"]' \
   '}' >"$FIXTURE/package.json" || exit 2
 
+python3 "$FIXTURE/scripts/npm-pack-check.py" >"$FIXTURE/clean-stdout" 2>"$FIXTURE/clean-stderr"
+RC=$?
+if [ "$RC" -ne 0 ] || ! grep -Fq 'npm-pack-check: PASS (7 exact files)' "$FIXTURE/clean-stdout"; then
+  printf 'npm pack guard fixture: checker baseline failed with exit %s\n' "$RC" >&2
+  cat "$FIXTURE/clean-stdout" "$FIXTURE/clean-stderr" >&2
+  exit 1
+fi
+
+printf 'unexpected fixture file\n' >"$FIXTURE/NOTICE" || exit 2
+python3 -c 'import json,sys; path=sys.argv[1]; value=json.load(open(path)); value["files"].append("NOTICE"); json.dump(value,open(path,"w"))' \
+  "$FIXTURE/package.json"
 python3 "$FIXTURE/scripts/npm-pack-check.py" >"$FIXTURE/stdout" 2>"$FIXTURE/stderr"
 RC=$?
 if [ "$RC" -ne 1 ]; then

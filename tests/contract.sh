@@ -3,6 +3,7 @@
 set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+BIN=${CODEX_DELEGATE_TEST_BIN:-$ROOT/bin/codex-delegate}
 WORKFLOW_LINT=$ROOT/hooks/guard-workflow.py
 SKILL=$ROOT/skills/routing/SKILL.md
 RUNNER=$ROOT/agents/runner.md
@@ -13,6 +14,7 @@ UNINSTALL=$ROOT/commands/uninstall.md
 HOOKS=$ROOT/hooks/hooks.json
 PREFLIGHT=$ROOT/hooks/preflight.sh
 GATE=$ROOT/scripts/gate.sh
+STUB=$ROOT/tests/stub/codex
 PLUGIN_LIFECYCLE=$ROOT/tests/plugin-lifecycle.sh
 CI=$ROOT/.github/workflows/ci.yml
 . "$ROOT/scripts/test-temp.sh"
@@ -41,6 +43,14 @@ workflow_denies_() {
   [ "$WORKFLOW_RC" = 0 ] && printf '%s\n' "$WORKFLOW_OUT" | grep -q '"permissionDecision": "deny"'
 }
 workflow_allows_() { [ "$WORKFLOW_RC" = 0 ] && [ -z "$WORKFLOW_OUT" ]; }
+entrypoint_surface_mutation_check() {
+  local scratch=$WORK/codex-delegate-audit
+  sed '/^def main() -> int:$/a\
+    if sys.argv[1] == "audit":\
+        return 0' "$BIN" >"$scratch" || return
+  python3 "$ROOT/tests/entrypoints_check.py" "$BIN" >/dev/null &&
+    ! python3 "$ROOT/tests/entrypoints_check.py" "$scratch" >/dev/null 2>&1
+}
 printf '\n== Workflow call boundary\n'
 workflow_inline_ "agent({agentType:'codex-delegate:runner',label:'codex:test',prompt:'work'})"
 check 'workflow_denies_ && printf "%s" "$WORKFLOW_OUT" | grep -Fq "agent(prompt: string, opts?:"' \
@@ -77,6 +87,17 @@ check '[ "$(grep -c "^codex-delegate run " "$RUNNER")" = 1 ] &&
        [ "$(grep -c "^codex-delegate runner-report" "$RUNNER")" = 1 ] &&
        ! grep -q "codex-delegate start\|codex-delegate wait\|codex-delegate status\|codex-delegate reap" "$RUNNER"' \
   "runner has exactly one launcher operation"
+check 'entrypoint_surface_mutation_check' \
+  "launcher exposes only the four entry points and rejects a direct audit mutation"
+check 'grep -Fq '\''"slug":"stub-model-a"'\'' "$STUB" &&
+       grep -Fq '\''"slug":"stub-model-b"'\'' "$STUB" &&
+       grep -Fq '\''"slug":"stub-model-c"'\'' "$STUB" &&
+       legacy_models_absent=true
+       for slug in "gpt-5.6-"sol "gpt-5.6-"terra "codex-auto-"review; do
+         grep -RFq --exclude=real-commands.json "$slug" "$ROOT/tests" && legacy_models_absent=false
+       done
+       $legacy_models_absent' \
+  "offline tests use only obviously synthetic model catalog slugs"
 check 'grep -q "Environment variables do not override" "$SKILL" &&
        ! grep -q "CODEX_DELEGATE_MODEL\|CODEX_DELEGATE_EFFORT\|bundled" "$SKILL"' \
   "skill documents only live-catalog selection"
@@ -149,16 +170,25 @@ check 'grep -Fq '"'"'CLAUDE_CONFIG_DIR=$WORK/home/.claude'"'"' "$PLUGIN_LIFECYCL
 check '! grep -Fq "already at the latest version" "$PLUGIN_LIFECYCLE" &&
        ! grep -Fq "updated from 1.0.0 to 1.0.1" "$PLUGIN_LIFECYCLE"' \
   "plugin lifecycle asserts cache state instead of Claude prose"
+check 'grep -Fq '\''bash "$ROOT/tests/checks.sh"'\'' "$ROOT/tests/security.sh"' \
+  "security suite retains the focused checks invocation"
 check 'grep -q "run_step .*contract suite.*tests/contract.sh" "$GATE" &&
        grep -q "run_step .*npm pack guard suite.*tests/npm-pack-check.sh" "$GATE" &&
        grep -q "run_step .*security suite.*tests/security.sh" "$GATE" &&
        grep -q "run_step .*run suite.*tests/run.sh" "$GATE" &&
        grep -q "run_step .*lifecycle suite.*tests/lifecycle.sh" "$GATE" &&
+       grep -q "run_step .*runner handoff suite.*tests/runner-handoff.sh" "$GATE" &&
        grep -q "run_step .*release workflow suite.*tests/release-workflow.sh" "$GATE" &&
        grep -q "run_step .*plugin install lifecycle.*tests/plugin-lifecycle.sh" "$GATE" &&
        grep -q "run_step .*corpus replay" "$GATE" && grep -q "run_step .*determinism" "$GATE" &&
        grep -q "run_step .*npm package contents.*scripts/npm-pack-check.py" "$GATE"' \
   "release gate retains every required suite, corpus, and determinism check"
+check 'gate_release_steps=true
+       for step in "repository push" "changelog evidence" "publication copy"; do
+         grep -Fq "run_step \"$step\"" "$GATE" || gate_release_steps=false
+       done
+       $gate_release_steps' \
+  "release gate retains repository push, changelog evidence, and publication copy by name"
 check 'gate_analysis=true
        # The gate is the only place these run. Losing one silently removes a whole
        # class of check while every suite stays green, which was measured.
@@ -171,8 +201,8 @@ check 'gate_analysis=true
        done
        $gate_analysis' \
   "release gate retains every static-analysis step"
-check 'grep -q "runs-on: macos-latest" "$CI" && grep -q "run: bash scripts/gate.sh" "$CI"' \
-  "macOS CI reaches the release gate"
+check 'python3 "$ROOT/tests/ci_gate_check.py" "$CI"' \
+  "the release-gate job itself runs on a macOS runner"
 check 'grep -Eq '"'"'^[[:space:]]*run_step "[^"]+" claude plugin validate \. --strict[[:space:]]*$'"'"' "$GATE" &&
        grep -Eq '"'"'^[[:space:]]*run_step "[^"]+" claude plugin validate \./\.claude-plugin/plugin\.json --strict[[:space:]]*$'"'"' "$GATE" &&
        grep -Fq '"'"'record "plugin install lifecycle" SKIP "SKIP (claude missing)"'"'"' "$GATE" &&
