@@ -125,6 +125,22 @@ repository_push_invariants() {
   echo "repository push: $remote_ref == $local_head"
 }
 
+# --pristine reruns this gate against a clean extraction of HEAD, the input a hosted runner
+# clones: untracked files are absent instead of silently unscanned, stale local refs are
+# invisible, and a file missing from the commit fails here instead of there.
+if [ "${1:-}" = --pristine ]; then
+  PRISTINE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/codex-delegate-pristine.XXXXXX") || exit 2
+  trap 'git worktree remove --force "$PRISTINE_DIR" 2>/dev/null; rm -rf "$PRISTINE_DIR"' EXIT
+  git worktree add --detach --quiet "$PRISTINE_DIR" HEAD || exit 2
+  (cd "$PRISTINE_DIR" && bash scripts/gate.sh)
+  PRISTINE_RC=$?
+  exit "$PRISTINE_RC"
+fi
+
+if untracked=$(git ls-files --others --exclude-standard) && [ -n "$untracked" ]; then
+  printf 'gate: NOT EVALUATED (untracked): %s\n' "$untracked" >&2
+fi
+
 if [ "${1:-}" = --timeout-self-test ]; then
   GATE_STEP_TIMEOUT_S=1
   GATE_SIGNAL_GRACE_S=0.1
