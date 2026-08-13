@@ -4,7 +4,7 @@
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-No version of this project has been published. The first release number remains an owner decision, so every entry below stays under Unreleased. Entries describe the shipped product surface a plugin or launcher user would notice, not the gate, check, and CI machinery that produced it.
+No version of this project has been published, so every entry below stays under Unreleased. Entries describe the shipped product surface a plugin or launcher user would notice, not the development machinery that produced it.
 
 ## [Unreleased]
 

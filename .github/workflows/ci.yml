@@ -13,6 +13,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Everything an external person can see must be understandable from this repository
+      # alone. Pull-request text is not a git object, so no local hook can screen it; this is
+      # the only deterministic gate it passes through.
+      - name: Pull-request text reads from the repository alone
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" |
+            grep -niE 'orchestrat|gauntlet|\blanes?\b|\bwave [0-9]\b|wf_[0-9a-f]{6}|\bitems? [0-9]+\b|model reviewers|verifier|re-verified|ISSUES\.md|WORKLOG\.md|HANDOFF\.md|STANDING-INSTR'; then
+            echo "::error::The pull-request title or body references a development process that is not part of this repository. Describe what changed and why in terms a reader of only this repository can follow." >&2
+            exit 1
+          fi
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
