@@ -34,7 +34,7 @@ The plugin does not install a persistent Bash allow rule. Older releases could a
 
 ## What the hooks see
 
-The `PreToolUse` hooks inspect Bash, Monitor, and Workflow call text. They keep no state, open no sockets, and send nothing over the network. They deny statically recognizable direct Codex launches, empty runner prompts, and wrapper overrides; they do not validate dynamic envelope semantics. The configured `PermissionRequest` hook is inert.
+The `PreToolUse` hooks inspect Bash, Monitor, and Workflow call text. They keep no state, open no sockets, and send nothing over the network. They deny statically recognizable direct Codex launches, empty runner prompts, and wrapper overrides; they do not validate dynamic envelope semantics. The configured `PermissionRequest` hook is inert. The `SubagentStop` hook reads the runner subagent's transcript locally and invokes the launcher's wait command; nothing it reads or invokes leaves the machine.
 
 ## Contact
 

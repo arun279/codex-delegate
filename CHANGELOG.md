@@ -10,6 +10,8 @@ No version of this project has been published, so every entry below stays under 
 
 ### Added
 
+- Added graceful runner stop protection: a `SubagentStop` hook refuses a stop while the delegated job reports `RUNNING`, returning the runner to waiting. The harness caps consecutive refusals, so a runner that keeps trying to stop is eventually ended.
+  <!-- evidence: tests/checks.sh :: a RUNNING launcher blocks the runner stop with the corrective wait instruction -->
 - Added ownership-proven retention that keeps the newest 100 inactive runs while never automatically removing live or unproven directories.
   <!-- evidence: tests/run.sh :: limit zero silently preserves every unproven directory and directory symlink -->
 - Added bounded environment overrides for launcher timing and buffering tunables, with command-line deadline precedence.

@@ -171,6 +171,287 @@ bounded_preflight_version_probe() {
   [ $((SECONDS - started)) -lt 6 ]
 }
 
+write_stop_transcript() { # path kickoff-output later-output filler-count prose-suffix
+  python3 -c '
+import json, sys
+path, kickoff, later, filler, suffix = sys.argv[1:]
+records = [
+    {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "kickoff-id", "name": "Bash", "input": {"command": "codex-delegate run --runner-handoff --sandbox read-only --deadline 7200"}}]}},
+    {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "kickoff-id", "content": f"Command running in background with ID: kickoff. Output is being written to: {kickoff}.output{suffix}"}]}},
+]
+if later != "-":
+    records.extend([
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "wait-id", "name": "Bash", "input": {"command": "codex-delegate runner-wait other.output"}}]}},
+        {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "wait-id", "content": f"Command running in background with ID: wait. Output is being written to: {later}.output. If it exits while you are still working, call runner-wait again."}]}},
+    ])
+records.extend({"type": "progress", "message": {"role": "user", "content": [{"type": "text", "text": f"record {index}"}]}} for index in range(int(filler)))
+with open(path, "w", encoding="utf-8") as stream:
+    for record in records:
+        stream.write(json.dumps(record) + "\n")
+' "$@"
+}
+
+write_stop_payload() { # main-transcript agent-type agent-transcript-or-dash
+  python3 -c '
+import json, sys
+main, agent_type, agent = sys.argv[1:]
+payload = {
+    "session_id": "session-probe",
+    "transcript_path": main,
+    "cwd": "/tmp/project",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStop",
+    "stop_hook_active": False,
+    "agent_id": "runner-probe",
+    "agent_type": agent_type,
+}
+if agent != "-":
+    payload["agent_transcript_path"] = agent
+print(json.dumps(payload))
+' "$@"
+}
+
+mutate_stop_hook() { # source destination old new
+  python3 -c '
+import sys
+source, destination, old, new = sys.argv[1:]
+text = open(source, encoding="utf-8").read()
+if text.count(old) != 1:
+    raise SystemExit(f"mutation target count was {text.count(old)}, expected 1")
+with open(destination, "w", encoding="utf-8") as stream:
+    stream.write(text.replace(old, new))
+' "$@" && chmod 700 "$2"
+}
+
+stop_hook_run() { # hook payload plugin-root result-prefix
+  local hook=$1 payload=$2 plugin_root=$3 prefix=$4
+  env CLAUDE_PLUGIN_ROOT="$plugin_root" STUB_ARGV_CAPTURE="$prefix.argv" \
+    STUB_ENV_CAPTURE="$prefix.env" "$hook" <"$payload" >"$prefix.stdout" 2>"$prefix.stderr"
+  STOP_RC=$?
+}
+
+printf '\n== runner SubagentStop protection\n'
+STOP_PLUGIN=$WORK/stop-plugin
+STOP_HOOK=$ROOT/hooks/subagent-stop.py
+mkdir -p "$STOP_PLUGIN/bin"
+printf '%s\n' '#!/bin/sh' \
+  'printf "%s\n" "$@" >"$STUB_ARGV_CAPTURE"' \
+  'printf "%s\n%s\n" "$CODEX_DELEGATE_RUNNER_WAIT_SECONDS" "$CODEX_DELEGATE_RUNNER_STARTUP_SECONDS" >"$STUB_ENV_CAPTURE"' \
+  'case "$2" in *ended*) printf "%s\n" ENDED ;; *) printf "%s\n" RUNNING ;; esac' \
+  >"$STOP_PLUGIN/bin/codex-delegate"
+chmod 700 "$STOP_PLUGIN/bin/codex-delegate"
+
+write_stop_transcript "$WORK/stop-main-ended.jsonl" "$WORK/main-ended" - 0 \
+  '. If it exits while you are still working, call runner-wait again.'
+write_stop_transcript "$WORK/stop-main-running.jsonl" "$WORK/main-running" - 0 \
+  '. If it exits while you are still working, call runner-wait again.'
+write_stop_transcript "$WORK/stop-running.jsonl" "$WORK/job-running" - 0 \
+  '. If it exits while you are still working, call runner-wait again.'
+write_stop_payload "$WORK/stop-main-ended.jsonl" codex-delegate:runner \
+  "$WORK/stop-running.jsonl" >"$WORK/stop-running.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-running.payload" "$STOP_PLUGIN" "$WORK/stop-running"
+if [ "$STOP_RC" -eq 2 ] &&
+  grep -Fxq 'The delegated job is still RUNNING; keep calling runner-wait until it returns ENDED.' \
+    "$WORK/stop-running.stderr" &&
+  grep -Fxq 110 "$WORK/stop-running.env" && grep -Fxq 60 "$WORK/stop-running.env"; then
+  ok "a RUNNING launcher blocks the runner stop with the corrective wait instruction"
+else
+  bad "a RUNNING launcher blocks the runner stop with the corrective wait instruction" \
+    "$WORK/stop-running.stderr"
+fi
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-wrong-transcript.py" \
+  'payload.get("agent_transcript_path")' 'payload.get("transcript_path")' || {
+  bad "the transcript-path mutation applies" "$WORK/stop-wrong-transcript.stderr"
+  exit 1
+}
+stop_hook_run "$WORK/stop-wrong-transcript.py" "$WORK/stop-running.payload" \
+  "$STOP_PLUGIN" "$WORK/stop-wrong-transcript"
+if [ "$STOP_RC" -eq 0 ]; then
+  ok "the RUNNING case kills a transcript_path-for-agent_transcript_path mutant"
+else
+  bad "the RUNNING case kills a transcript_path-for-agent_transcript_path mutant" \
+    "$WORK/stop-wrong-transcript.stderr"
+fi
+
+write_stop_transcript "$WORK/stop-ended.jsonl" "$WORK/job-ended" - 0 \
+  '. If it exits while you are still working, call runner-wait again.'
+write_stop_payload "$WORK/stop-main-running.jsonl" codex-delegate:runner \
+  "$WORK/stop-ended.jsonl" >"$WORK/stop-ended.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-ended.payload" "$STOP_PLUGIN" "$WORK/stop-ended"
+expect_ended_rc=$STOP_RC
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-ended-blocks.py" \
+  'result.stdout.strip() == "RUNNING"' 'result.stdout.strip() in {"RUNNING", "ENDED"}' || {
+  bad "the ENDED-blocking mutation applies" "$WORK/stop-ended-mutant.stderr"
+  exit 1
+}
+stop_hook_run "$WORK/stop-ended-blocks.py" "$WORK/stop-ended.payload" \
+  "$STOP_PLUGIN" "$WORK/stop-ended-mutant"
+if [ "$expect_ended_rc" -eq 0 ] && [ "$STOP_RC" -eq 2 ]; then
+  ok "ENDED allows the stop and kills an ENDED-blocking mutant"
+else
+  bad "ENDED allows the stop and kills an ENDED-blocking mutant" "$WORK/stop-ended-mutant.stderr"
+fi
+
+write_stop_payload "$WORK/stop-main-ended.jsonl" another:runner \
+  "$WORK/stop-running.jsonl" >"$WORK/stop-nonrunner.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-nonrunner.payload" "$STOP_PLUGIN" "$WORK/stop-nonrunner"
+nonrunner_rc=$STOP_RC
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-no-type-check.py" \
+  'if not isinstance(payload, dict) or payload.get("agent_type") != RUNNER_TYPE:' \
+  'if not isinstance(payload, dict):' || {
+  bad "the agent-type-check mutation applies" "$WORK/stop-nonrunner-mutant.stderr"
+  exit 1
+}
+stop_hook_run "$WORK/stop-no-type-check.py" "$WORK/stop-nonrunner.payload" \
+  "$STOP_PLUGIN" "$WORK/stop-nonrunner-mutant"
+if [ "$nonrunner_rc" -eq 0 ] && [ "$STOP_RC" -eq 2 ]; then
+  ok "a non-runner allows the stop and kills an agent-type-check mutant"
+else
+  bad "a non-runner allows the stop and kills an agent-type-check mutant" \
+    "$WORK/stop-nonrunner-mutant.stderr"
+fi
+
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-main-fallback.py" \
+  'payload.get("agent_transcript_path")' \
+  'payload.get("agent_transcript_path") or payload.get("transcript_path")' || {
+  bad "the missing-transcript fallback mutation applies" "$WORK/stop-missing-path-mutant.stderr"
+  exit 1
+}
+write_stop_payload "$WORK/stop-main-running.jsonl" codex-delegate:runner - \
+  >"$WORK/stop-missing-path.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-missing-path.payload" "$STOP_PLUGIN" \
+  "$WORK/stop-missing-path"
+missing_path_rc=$STOP_RC
+stop_hook_run "$WORK/stop-main-fallback.py" "$WORK/stop-missing-path.payload" \
+  "$STOP_PLUGIN" "$WORK/stop-missing-path-mutant"
+missing_path_mutant_rc=$STOP_RC
+write_stop_payload "$WORK/stop-main-running.jsonl" codex-delegate:runner \
+  "$WORK/does-not-exist.jsonl" >"$WORK/stop-unreadable.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-unreadable.payload" "$STOP_PLUGIN" "$WORK/stop-unreadable"
+unreadable_rc=$STOP_RC
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-unreadable-fallback.py" \
+  '_output_path(transcript_path)' \
+  '_output_path(transcript_path) or _output_path(payload["transcript_path"])' || {
+  bad "the unreadable-transcript fallback mutation applies" \
+    "$WORK/stop-unreadable-mutant.stderr"
+  exit 1
+}
+stop_hook_run "$WORK/stop-unreadable-fallback.py" "$WORK/stop-unreadable.payload" \
+  "$STOP_PLUGIN" "$WORK/stop-unreadable-mutant"
+unreadable_mutant_rc=$STOP_RC
+if [ "$missing_path_rc" -eq 0 ] && [ "$missing_path_mutant_rc" -eq 2 ] &&
+  [ "$unreadable_rc" -eq 0 ] && [ "$unreadable_mutant_rc" -eq 2 ]; then
+  ok "missing and unreadable agent transcripts allow and kill main-transcript fallback mutants"
+else
+  bad "missing and unreadable agent transcripts allow and kill main-transcript fallback mutants" \
+    "$WORK/stop-unreadable-mutant.stderr"
+fi
+
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-error-blocks.py" \
+  'except (OSError, ValueError, subprocess.TimeoutExpired):' \
+  'except subprocess.TimeoutExpired:' || {
+  bad "the launch-error mutation applies" "$WORK/stop-missing-launcher-mutant.stderr"
+  exit 1
+}
+write_stop_payload "$WORK/stop-main-ended.jsonl" codex-delegate:runner \
+  "$WORK/stop-running.jsonl" >"$WORK/stop-missing-launcher.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-missing-launcher.payload" "$WORK/missing-plugin" \
+  "$WORK/stop-missing-launcher"
+missing_launcher_rc=$STOP_RC
+stop_hook_run "$WORK/stop-error-blocks.py" "$WORK/stop-missing-launcher.payload" \
+  "$WORK/missing-plugin" "$WORK/stop-missing-launcher-mutant"
+if [ "$missing_launcher_rc" -eq 0 ] && [ "$STOP_RC" -eq 1 ]; then
+  ok "a missing launcher allows the stop and kills an uncaught-launch-error mutant"
+else
+  bad "a missing launcher allows the stop and kills an uncaught-launch-error mutant" \
+    "$WORK/stop-missing-launcher-mutant.stderr"
+fi
+
+write_stop_transcript "$WORK/stop-correlated.jsonl" "$WORK/correlated-running" \
+  "$WORK/later-ended" 0 '. If it exits while you are still working, call runner-wait again.'
+write_stop_payload "$WORK/stop-main-ended.jsonl" codex-delegate:runner \
+  "$WORK/stop-correlated.jsonl" >"$WORK/stop-correlated.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-correlated.payload" "$STOP_PLUGIN" "$WORK/stop-correlated"
+correlated_rc=$STOP_RC
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-uncorrelated.py" \
+  'if block.get("type") != "tool_result" or block.get("tool_use_id") not in kickoff_ids:' \
+  'if block.get("type") != "tool_result":' || {
+  bad "the uncorrelated-result mutation applies" "$WORK/stop-uncorrelated.stderr"
+  exit 1
+}
+stop_hook_run "$WORK/stop-uncorrelated.py" "$WORK/stop-correlated.payload" \
+  "$STOP_PLUGIN" "$WORK/stop-uncorrelated"
+if [ "$correlated_rc" -eq 2 ] && grep -Fxq "$WORK/correlated-running.output" \
+  "$WORK/stop-correlated.argv" && [ "$STOP_RC" -eq 0 ]; then
+  ok "only kickoff-correlated results supply the path and the last-record mutant fails"
+else
+  bad "only kickoff-correlated results supply the path and the last-record mutant fails" \
+    "$WORK/stop-uncorrelated.stderr"
+fi
+
+write_stop_transcript "$WORK/stop-prose.jsonl" "$WORK/prose-running" - 0 \
+  '. If it exits while you are still working, keep waiting for the launcher.'
+write_stop_payload "$WORK/stop-main-ended.jsonl" codex-delegate:runner \
+  "$WORK/stop-prose.jsonl" >"$WORK/stop-prose.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-prose.payload" "$STOP_PLUGIN" "$WORK/stop-prose"
+prose_rc=$STOP_RC
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-greedy.py" \
+  '(.+?\.output)(?=$|[\s.,;:!?\])}])' '(.+\.output.*)' || {
+  bad "the greedy-regex mutation applies" "$WORK/stop-greedy.stderr"
+  exit 1
+}
+stop_hook_run "$WORK/stop-greedy.py" "$WORK/stop-prose.payload" "$STOP_PLUGIN" "$WORK/stop-greedy"
+if [ "$prose_rc" -eq 2 ] && grep -Fxq "$WORK/prose-running.output" "$WORK/stop-prose.argv" &&
+  [ "$STOP_RC" -eq 2 ] && [ -s "$WORK/stop-greedy.argv" ] &&
+  ! grep -Fxq "$WORK/prose-running.output" "$WORK/stop-greedy.argv"; then
+  ok "real harness prose yields a bare path and kills a greedy-regex mutant"
+else
+  bad "real harness prose yields a bare path and kills a greedy-regex mutant" \
+    "$WORK/stop-greedy.stderr"
+fi
+
+write_stop_transcript "$WORK/stop-long.jsonl" "$WORK/long-running" - 4000 \
+  '. If it exits while you are still working, call runner-wait again.'
+write_stop_payload "$WORK/stop-main-ended.jsonl" codex-delegate:runner \
+  "$WORK/stop-long.jsonl" >"$WORK/stop-long.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-long.payload" "$STOP_PLUGIN" "$WORK/stop-long"
+long_rc=$STOP_RC
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-tail.py" \
+  'for line in transcript:' 'for line in list(transcript)[-200:]:' || {
+  bad "the transcript-tail mutation applies" "$WORK/stop-tail.stderr"
+  exit 1
+}
+stop_hook_run "$WORK/stop-tail.py" "$WORK/stop-long.payload" "$STOP_PLUGIN" "$WORK/stop-tail"
+if [ "$long_rc" -eq 2 ] && [ "$STOP_RC" -eq 0 ]; then
+  ok "the whole transcript is scanned and a last-200-lines mutant fails"
+else
+  bad "the whole transcript is scanned and a last-200-lines mutant fails" "$WORK/stop-tail.stderr"
+fi
+
+write_stop_transcript "$WORK/stop-torn.jsonl" "$WORK/torn-running" - 0 \
+  '. If it exits while you are still working, call runner-wait again.'
+printf '%s\342' '{"type":"progress","message":"' >>"$WORK/stop-torn.jsonl"
+write_stop_payload "$WORK/stop-main-ended.jsonl" codex-delegate:runner \
+  "$WORK/stop-torn.jsonl" >"$WORK/stop-torn.payload"
+stop_hook_run "$STOP_HOOK" "$WORK/stop-torn.payload" "$STOP_PLUGIN" "$WORK/stop-torn"
+torn_rc=$STOP_RC
+mutate_stop_hook "$STOP_HOOK" "$WORK/stop-torn-whole-file.py" \
+  'except json.JSONDecodeError:
+                    continue' \
+  'except json.JSONDecodeError:
+                    return None' || {
+  bad "the whole-file parse-failure mutation applies" "$WORK/stop-torn-mutant.stderr"
+  exit 1
+}
+stop_hook_run "$WORK/stop-torn-whole-file.py" "$WORK/stop-torn.payload" \
+  "$STOP_PLUGIN" "$WORK/stop-torn-mutant"
+if [ "$torn_rc" -eq 2 ] && [ "$STOP_RC" -eq 0 ]; then
+  ok "a torn UTF-8 trailing record preserves kickoff protection and kills the whole-file mutant"
+else
+  bad "a torn UTF-8 trailing record preserves kickoff protection and kills the whole-file mutant" \
+    "$WORK/stop-torn-mutant.stderr"
+fi
+
 printf '\n== preflight launcher reachability\n'
 PREFLIGHT_CODEX_PATH=$WORK/preflight-codex
 mkdir -p "$PREFLIGHT_CODEX_PATH"
