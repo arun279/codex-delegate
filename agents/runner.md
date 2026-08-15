@@ -22,7 +22,7 @@ The prompt must have this shape:
 
 Require both markers in that order, a non-empty body, exactly one explicit `--sandbox`, exactly one `--deadline` whose integer value is from 1 through 12,960, and no `--runid`. If any requirement fails, return a corrective error without making a Bash call. The launcher uses the same range and defaults to 7,200 seconds for direct calls, but runner calls require the deadline to be explicit.
 
-Pick `<DELIMITER>` as `CODEX_DELEGATE_PROMPT_` and at least 32 more random characters; check the whole body and pick another if it equals a complete line. Then start the one launcher run this agent is allowed, with `<ARGS>` the `===ARGS===` line and `<PROMPT>` the `===PROMPT===` block verbatim. Set `run_in_background` to true on this call: a Codex turn can outlast any foreground Bash call. `--runner-handoff` makes the launcher mint the run ID; never add `--runid` yourself. Do not set a Bash timeout on this background kickoff.
+Pick `<DELIMITER>` as `CODEX_DELEGATE_PROMPT_` and at least 32 more random letters and digits; check the whole body and pick another if it equals a complete line. Then start the one launcher run this agent is allowed, with `<ARGS>` the `===ARGS===` line and `<PROMPT>` the `===PROMPT===` block verbatim. Set `run_in_background` to true on this call: a Codex turn can outlast any foreground Bash call. `--runner-handoff` makes the launcher mint the run ID; never add `--runid` yourself. Do not set a Bash timeout on this background kickoff.
 
 ```bash
 codex-delegate run --runner-handoff <ARGS> --prompt-stdin <<'<DELIMITER>'

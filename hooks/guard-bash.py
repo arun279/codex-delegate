@@ -3,9 +3,12 @@
 """Block unsupervised Codex turns started from Bash or Monitor tool input.
 
 The parser follows executable positions through common wrappers and code sinks. Text
-that merely mentions Codex is data and has no bearing on the decision. Unknown or
-invalid shell syntax fails open. To override the hook, start Claude Code with
-CODEX_DELEGATE_GUARD_BASH_OVERRIDE=1 in its environment.
+that merely mentions Codex is normally data, and unknown or invalid shell syntax
+normally fails open. The exception is raw text containing ``--runner-handoff``: it
+fails closed unless a successful parse finds no ``codex-delegate`` invocation in a
+modeled position or the whole command has the documented runner kickoff shell shape.
+To override the hook, start Claude Code with CODEX_DELEGATE_GUARD_BASH_OVERRIDE=1 in
+its environment.
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ HOOK_COMMANDS = {
     "GIT_PAGER": frozenset({"git"}),
     "PAGER": frozenset({"git", "man"}),
 }
+GIT_CODE_CONFIGS = frozenset({"core.pager", "core.sshcommand", "diff.external"})
 
 REASON = (
     "Blocked: a possible Codex CLI launch could not be proved inert. Model turns and Codex "
@@ -57,6 +61,24 @@ REASON = (
     "environment; assigning that variable inside this command cannot change the hook's "
     "already-inherited environment."
 )
+RUNNER_DELIMITER = re.compile(r"^CODEX_DELEGATE_PROMPT_[A-Za-z0-9]{32,}$")
+RUNNER_ARGV_TOKEN = re.compile(r"^[A-Za-z0-9._/~=+-]+$")
+RUNNER_FLAGS = frozenset(
+    {
+        "--add-dir",
+        "--cwd",
+        "--deadline",
+        "--effort",
+        "--model",
+        "--network",
+        "--prompt-stdin",
+        "--runner-handoff",
+        "--sandbox",
+        "--schema",
+    }
+)
+RUNNER_VALUE_FLAGS = RUNNER_FLAGS - {"--network", "--prompt-stdin", "--runner-handoff"}
+RUNNER_RAW_TRIGGER = "--runner-handoff"
 
 PartKind = Literal["literal", "variable", "parameter", "command"]
 Part = Tuple[PartKind, str]
@@ -192,8 +214,13 @@ def _mask_expansions(source: str) -> Optional[Tuple[str, List[Part]]]:
                 quote = None
             index += 1
         elif char == "\\":
-            output.append(source[index : index + 2])
-            index += 2
+            if source.startswith("\\\r\n", index):
+                index += 3
+            elif source.startswith("\\\n", index):
+                index += 2
+            else:
+                output.append(source[index : index + 2])
+                index += 2
         elif char == "'" and quote is None:
             output.append(char)
             quote = "'"
@@ -620,7 +647,7 @@ def _call_name(call: ast.Call) -> Optional[str]:
     return None
 
 
-def _python_starts(code: str, variables: Variables, staged: Dict[str, str]) -> bool:
+def _python_starts(code: str, variables: Variables, staged: Dict[str, str], runner: bool = False) -> bool:
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError):
@@ -642,7 +669,7 @@ def _python_starts(code: str, variables: Variables, staged: Dict[str, str]) -> b
         name = _call_name(node)
         if name in shell_calls and node.args:
             value = _static_node_string(node.args[0])
-            if value is not None and _scan_shell(value, dict(variables), dict(staged)):
+            if value is not None and _scan_shell(value, dict(variables), dict(staged), runner):
                 return True
         elif name in process_calls:
             argument = node.args[0] if node.args else next((keyword.value for keyword in node.keywords if keyword.arg == "args"), None)
@@ -653,24 +680,24 @@ def _python_starts(code: str, variables: Variables, staged: Dict[str, str]) -> b
             )
             value = _static_node_string(argument)
             argv = _static_node_argv(argument)
-            if shell and value is not None and _scan_shell(value, dict(variables), dict(staged)):
+            if shell and value is not None and _scan_shell(value, dict(variables), dict(staged), runner):
                 return True
-            if not shell and argv is not None and _values_start(argv, variables, staged, None):
+            if not shell and argv is not None and _values_start(argv, variables, staged, None, runner):
                 return True
         elif name in {"os.execl", "os.execlp"} and len(node.args) >= 2:
             program = _static_node_string(node.args[0])
             argv_values: List[Optional[str]] = [_static_node_string(item) for item in node.args[2:]]
-            if program is not None and _values_start([program, *argv_values], variables, staged, None):
+            if program is not None and _values_start([program, *argv_values], variables, staged, None, runner):
                 return True
         elif name in {"os.execv", "os.execvp"} and len(node.args) >= 2:
             program = _static_node_string(node.args[0])
             argv = _static_node_argv(node.args[1])
-            if program is not None and argv is not None and _values_start([program, *argv[1:]], variables, staged, None):
+            if program is not None and argv is not None and _values_start([program, *argv[1:]], variables, staged, None, runner):
                 return True
     return False
 
 
-def _embedded_shell_starts(code: str, variables: Variables, staged: Dict[str, str]) -> bool:
+def _embedded_shell_starts(code: str, variables: Variables, staged: Dict[str, str], runner: bool = False) -> bool:
     patterns = (
         r"(?is)\bdo\s+shell\s+script\s+([\"'])(.*?)\1",
         r"(?is)\bsystem\s*\(\s*([\"'])(.*?)\1",
@@ -680,7 +707,7 @@ def _embedded_shell_starts(code: str, variables: Variables, staged: Dict[str, st
             body = _unescape(match.group(2))
             if body is None:
                 continue
-            if _scan_shell(body, dict(variables), dict(staged)):
+            if _scan_shell(body, dict(variables), dict(staged), runner):
                 return True
     return False
 
@@ -690,6 +717,7 @@ def _values_start(
     variables: Variables,
     staged: Dict[str, str],
     piped_code: Optional[str],
+    runner: bool = False,
 ) -> bool:
     if not values or values[0] is None:
         return False
@@ -701,7 +729,7 @@ def _values_start(
                 if split is None:
                     return False
                 try:
-                    return _values_start(shlex.split(split), variables, staged, piped_code)
+                    return _values_start(shlex.split(split), variables, staged, piped_code, runner)
                 except ValueError:
                     return False
             if value is not None and value.startswith("--split-string="):
@@ -711,6 +739,7 @@ def _values_start(
                         variables,
                         staged,
                         piped_code,
+                        runner,
                     )
                 except ValueError:
                     return False
@@ -719,38 +748,58 @@ def _values_start(
         return False
     program, args = effective
     name = _program_name(program)
+    if runner and name == "codex-delegate":
+        return True
+    if not runner and _codex_starts(program, args):
+        return True
     if name == "codex-delegate":
         return False
-    if _codex_starts(program, args):
-        return True
-    if program in staged and _scan_shell(staged[program], dict(variables), dict(staged)):
+    if program in staged and _scan_shell(staged[program], dict(variables), dict(staged), runner):
         return True
     if name in SHELLS:
         code, has_code = _option_code(args)
         if has_code:
-            return code is not None and _scan_shell(code, dict(variables), dict(staged))
+            return code is not None and _scan_shell(code, dict(variables), dict(staged), runner)
         script = _first_script(args)
         if script in staged:
-            return _scan_shell(staged[script], dict(variables), dict(staged))
-        return piped_code is not None and _scan_shell(piped_code, dict(variables), dict(staged))
+            return _scan_shell(staged[script], dict(variables), dict(staged), runner)
+        return piped_code is not None and _scan_shell(piped_code, dict(variables), dict(staged), runner)
     if name == "eval":
         code = " ".join(value for value in args if value is not None)
-        return bool(code) and _scan_shell(code, dict(variables), dict(staged))
+        return bool(code) and _scan_shell(code, dict(variables), dict(staged), runner)
+    if name == "trap" and args:
+        index = 1 if args[0] == "--" else 0
+        if index < len(args) and args[index] not in (None, "-l", "-p"):
+            return _scan_shell(args[index] or "", dict(variables), dict(staged), runner)
+    if name == "git":
+        index = 0
+        while index + 1 < len(args) and args[index] == "-c":
+            setting = args[index + 1]
+            if setting is None:
+                return False
+            key, separator, code = setting.partition("=")
+            if separator and key.lower() in GIT_CODE_CONFIGS and _scan_shell(code, dict(variables), dict(staged), runner):
+                return True
+            index += 2
+    if runner and name == "su":
+        for index, arg in enumerate(args):
+            if arg in ("-c", "--command") and index + 1 < len(args) and args[index + 1] is not None:
+                return _scan_shell(args[index + 1] or "", dict(variables), dict(staged), runner)
     if name in {"python", "python3"}:
         for index, arg in enumerate(args):
             if arg == "-c" and index + 1 < len(args) and args[index + 1] is not None:
-                return _python_starts(args[index + 1] or "", variables, staged)
+                return _python_starts(args[index + 1] or "", variables, staged, runner)
     if name in {"awk", "osascript", "perl", "ruby", "node"}:
         for index, arg in enumerate(args):
             if (
                 arg in ("-e", "--eval")
                 and index + 1 < len(args)
                 and args[index + 1] is not None
-                and _embedded_shell_starts(args[index + 1] or "", variables, staged)
+                and _embedded_shell_starts(args[index + 1] or "", variables, staged, runner)
             ):
                 return True
         if name == "awk" and args and args[0] is not None:
-            return _embedded_shell_starts(args[0] or "", variables, staged)
+            return _embedded_shell_starts(args[0] or "", variables, staged, runner)
     if name == "npx":
         cursor = 0
         while cursor < len(args):
@@ -762,7 +811,7 @@ def _values_start(
             elif arg.startswith("-"):
                 cursor += 1
             else:
-                return _values_start(args[cursor:], variables, staged, piped_code)
+                return _values_start(args[cursor:], variables, staged, piped_code, runner)
         return False
     if name == "script":
         cursor = 0
@@ -771,7 +820,7 @@ def _values_start(
             if arg is None or not arg.startswith("-"):
                 break
             cursor += 1
-        return cursor + 1 < len(args) and _values_start(args[cursor + 1 :], variables, staged, piped_code)
+        return cursor + 1 < len(args) and _values_start(args[cursor + 1 :], variables, staged, piped_code, runner)
     if name == "xargs":
         cursor = 0
         value_options = frozenset({"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"})
@@ -784,7 +833,7 @@ def _values_start(
             elif arg.startswith("-"):
                 cursor += 1
             else:
-                return _values_start(args[cursor:], variables, staged, piped_code)
+                return _values_start(args[cursor:], variables, staged, piped_code, runner)
         return False
     if name == "find":
         for cursor, arg in enumerate(args):
@@ -793,7 +842,7 @@ def _values_start(
                     (index for index in range(cursor + 1, len(args)) if args[index] in (";", "+")),
                     len(args),
                 )
-                if _values_start(args[cursor + 1 : end], variables, staged, piped_code):
+                if _values_start(args[cursor + 1 : end], variables, staged, piped_code, runner):
                     return True
     return False
 
@@ -858,28 +907,28 @@ def _infer_output(source: str, variables: Variables) -> Optional[str]:
     return _static_output(commands[0], variables)
 
 
-def _scan_word_substitutions(words: Sequence[Word], variables: Variables, staged: Dict[str, str]) -> bool:
+def _scan_word_substitutions(words: Sequence[Word], variables: Variables, staged: Dict[str, str], runner: bool = False) -> bool:
     for word in words:
         for kind, body in word.parts:
-            if kind == "command" and _scan_shell(body, dict(variables), dict(staged)):
+            if kind == "command" and _scan_shell(body, dict(variables), dict(staged), runner):
                 return True
     return False
 
 
-def _scan_expansions(source: str, variables: Variables, staged: Dict[str, str]) -> bool:
+def _scan_expansions(source: str, variables: Variables, staged: Dict[str, str], runner: bool = False) -> bool:
     index = 0
     while index < len(source):
         if source.startswith("$(", index):
             body, index, closed = _consume_dollar_paren(source, index)
             if not closed:
                 return False
-            if _scan_shell(body, dict(variables), dict(staged)):
+            if _scan_shell(body, dict(variables), dict(staged), runner):
                 return True
         elif source[index] == "`":
             body, index, closed = _consume_backticks(source, index)
             if not closed:
                 return False
-            if _scan_shell(body, dict(variables), dict(staged)):
+            if _scan_shell(body, dict(variables), dict(staged), runner):
                 return True
         else:
             index += 1
@@ -906,9 +955,10 @@ def _inspect_simple(
     variables: Variables,
     staged: Dict[str, str],
     piped_code: Optional[str],
+    runner: bool = False,
 ) -> bool:
     local, words, assigned = _local_command(simple, variables)
-    if _scan_word_substitutions(simple.words, local, staged):
+    if _scan_word_substitutions(simple.words, local, staged, runner):
         return True
     if not words:
         if simple.after not in ("|", "|&"):
@@ -927,16 +977,21 @@ def _inspect_simple(
             variables.update(declarations)
         return False
     values = [_resolve_word(word, local) for word in words]
-    if values and values[0] is not None and _values_start(values, local, staged, piped_code):
+    stdin_code = piped_code
+    for operator, word in simple.redirects:
+        if operator == "<<<":
+            value = _resolve_word(word, local)
+            stdin_code = None if value is None else value + "\n"
+    if values and values[0] is not None and _values_start(values, local, staged, stdin_code, runner):
         return True
     host = _program_name(values[0] if values else None)
     for name, value in assigned.items():
-        if host in HOOK_COMMANDS.get(name, frozenset()) and _scan_shell(value, dict(local), dict(staged)):
+        if host in HOOK_COMMANDS.get(name, frozenset()) and _scan_shell(value, dict(local), dict(staged), runner):
             return True
     return False
 
 
-def _heredoc_starts(heredoc: Heredoc, variables: Variables, staged: Dict[str, str]) -> bool:
+def _heredoc_starts(heredoc: Heredoc, variables: Variables, staged: Dict[str, str], runner: bool = False) -> bool:
     tokens = _tokenize(heredoc.header)
     if tokens is None:
         return False
@@ -949,9 +1004,16 @@ def _heredoc_starts(heredoc: Heredoc, variables: Variables, staged: Dict[str, st
             effective is not None
             and _program_name(effective[0]) in SHELLS
             and (any(operator in ("<<", "<<-") for operator, _ in simple.redirects) or simple.before in ("|", "|&"))
-            and _scan_shell(heredoc.body, dict(local), dict(staged))
+            and _scan_shell(heredoc.body, dict(local), dict(staged), runner)
         ):
             return True
+        if effective is not None and runner and _program_name(effective[0]) == "make":
+            args = effective[1]
+            reads_stdin = "--file=-" in args or any(
+                arg in ("-f", "--file", "--makefile") and index + 1 < len(args) and args[index + 1] == "-" for index, arg in enumerate(args)
+            )
+            if reads_stdin and _scan_shell(heredoc.body, dict(local), dict(staged), runner):
+                return True
         for operator, word in simple.redirects:
             if operator not in (">", ">|", ">>"):
                 continue
@@ -961,25 +1023,126 @@ def _heredoc_starts(heredoc: Heredoc, variables: Variables, staged: Dict[str, st
                     staged[path] = staged.get(path, "") + heredoc.body
                 else:
                     staged[path] = heredoc.body
-    return not heredoc.quoted and _scan_expansions(heredoc.body, variables, staged)
+    return not heredoc.quoted and _scan_expansions(heredoc.body, variables, staged, runner)
 
 
-def _scan_shell(command: str, variables: Variables, staged: Dict[str, str]) -> bool:
+def _runner_raw_matches(command: str) -> bool:
+    return RUNNER_RAW_TRIGGER in command
+
+
+def _runner_invocation(simple: SimpleCommand) -> bool:
+    local, words, _ = _local_command(simple, {})
+    values = [_resolve_word(word, local) for word in words]
+    effective = _unwrap(values) if values else None
+    if effective is None or _program_name(effective[0]) != "codex-delegate":
+        return False
+    return "run" in effective[1] and "--runner-handoff" in effective[1]
+
+
+def _runner_argv_violation(words: Sequence[Word], raw_argv: str) -> Optional[str]:
+    raw_tokens = raw_argv.split()
+    invalid_raw = len(raw_tokens) != len(words) or any(
+        token not in RUNNER_FLAGS and RUNNER_ARGV_TOKEN.fullmatch(token) is None for token in raw_tokens
+    )
+    if invalid_raw:
+        return "rule 2 (every raw argument must be an exact flag or use only [A-Za-z0-9._/~=+-])"
+    if any(kind != "literal" for word in words for kind, _ in word.parts):
+        return "rule 2 (every argument must be shell-literal data without expansions)"
+    argv = [_resolve_word(word, {}) or "" for word in words]
+    if argv[:3] != ["codex-delegate", "run", "--runner-handoff"] or argv[-1:] != ["--prompt-stdin"]:
+        return "rule 2 (the command and fixed runner arguments must be exact)"
+
+    counts: Dict[str, int] = {}
+    index = 3
+    while index < len(argv) - 1:
+        flag = argv[index]
+        counts[flag] = counts.get(flag, 0) + 1
+        if flag == "--network":
+            if counts[flag] > 1:
+                return "rule 2 (--network may appear at most once)"
+            index += 1
+            continue
+        if flag not in RUNNER_VALUE_FLAGS:
+            return "rule 2 (only documented runner flags are allowed)"
+        if index + 1 >= len(argv) - 1:
+            return "rule 2 (a runner flag is missing its value)"
+        if flag != "--add-dir" and counts[flag] > 1:
+            return "rule 2 (a non-repeatable runner flag appears more than once)"
+        index += 2
+    if counts.get("--sandbox") != 1 or counts.get("--deadline") != 1:
+        return "rule 2 (--sandbox and --deadline are each required exactly once)"
+    return None
+
+
+def runner_kickoff_violation(command: str) -> Optional[str]:
+    """Return a runner grammar violation, or None when no runner kickoff is present."""
     stripped = _strip_heredoc_bodies(command)
     if stripped is None:
-        return False
+        return "rule 1 (an ambiguous kickoff parse must fail closed)" if _runner_raw_matches(command) else None
+    source, heredocs = stripped
+    tokens = _tokenize(source)
+    if tokens is None:
+        return "rule 1 (an ambiguous kickoff parse must fail closed)" if _runner_raw_matches(command) else None
+    commands = _simple_commands(tokens)
+    if not any(_runner_invocation(simple) for simple in commands):
+        if _runner_raw_matches(command) and _scan_shell(command, {}, {}, runner=True):
+            return "rule 1 (a nested or constructed runner invocation is forbidden)"
+        return None
+    if len(commands) != 1:
+        return "rule 1 (the kickoff must be exactly one simple command)"
+    simple = commands[0]
+    local, words, assigned = _local_command(simple, {})
+    del local
+    if assigned or len(words) != len(simple.words):
+        return "rule 1 (environment-assignment prefixes are forbidden)"
+    if simple.before is not None or simple.after not in (None, "\n"):
+        return "rule 1 (command separators, pipelines, and background operators are forbidden)"
+    if len(simple.redirects) != 1 or simple.redirects[0][0] != "<<":
+        return "rule 1 (the single quoted heredoc is the only allowed redirect)"
+    if not words or _resolve_word(words[0], {}) != "codex-delegate":
+        return "rule 1 (wrapper programs and alternate executable spellings are forbidden)"
+    if len(heredocs) != 1:
+        return "rule 3 (exactly one heredoc is required)"
+
+    heredoc = heredocs[0]
+    delimiter = _resolve_word(simple.redirects[0][1], {})
+    if not heredoc.quoted:
+        return "rule 3 (the heredoc delimiter must be quoted)"
+    if delimiter is None or RUNNER_DELIMITER.fullmatch(delimiter) is None:
+        return "rule 3 (the heredoc delimiter has the wrong shape)"
+    header_match = re.fullmatch(
+        r"(?P<argv>[^\r\n]+)[ \t]+<<(?P<quote>['\"])(?P<delimiter>[A-Za-z0-9_]+)(?P=quote)\r?\n",
+        heredoc.header,
+    )
+    if header_match is None or header_match.group("delimiter") != delimiter:
+        return "rule 1 (the kickoff header must use the exact simple heredoc form)"
+    if not heredoc.body:
+        return "rule 3 (the heredoc body must be non-empty)"
+    if delimiter in heredoc.body.splitlines():
+        return "rule 3 (the delimiter may not occur as an interior body line)"
+    expected_prefix = heredoc.header + heredoc.body + delimiter
+    remainder = command[len(expected_prefix) :] if command.startswith(expected_prefix) else "not-whitespace"
+    if remainder and not remainder.isspace():
+        return "rule 3 (only whitespace may follow the closing delimiter)"
+    return _runner_argv_violation(words, header_match.group("argv"))
+
+
+def _scan_shell(command: str, variables: Variables, staged: Dict[str, str], runner: bool = False) -> bool:
+    stripped = _strip_heredoc_bodies(command)
+    if stripped is None:
+        return runner
     source, heredocs = stripped
     for heredoc in heredocs:
-        if _heredoc_starts(heredoc, variables, staged):
+        if _heredoc_starts(heredoc, variables, staged, runner):
             return True
     tokens = _tokenize(source)
     if tokens is None:
-        return False
+        return runner
     commands = _simple_commands(tokens)
     previous_output: Optional[str] = None
     for simple in commands:
         piped = previous_output if simple.before in ("|", "|&") else None
-        if _inspect_simple(simple, variables, staged, piped):
+        if _inspect_simple(simple, variables, staged, piped, runner):
             return True
         output = _static_output(simple, variables)
         _record_stage(simple, output, variables, staged)
@@ -1007,10 +1170,16 @@ def main() -> int:
     command = tool_input.get("command", "")
     if not isinstance(command, str):
         return 0
+    violation: Optional[str]
     try:
         deny = starts_codex(command)
-    except Exception:  # noqa: BLE001 -- a hook parser failure must fail open
+    except Exception:  # noqa: BLE001 -- the broad direct-launch parser fails open
         deny = False
+    try:
+        violation = runner_kickoff_violation(command)
+    except Exception:  # noqa: BLE001 -- a recognizable runner kickoff fails closed
+        violation = "rule 1 (an ambiguous kickoff parse must fail closed)" if _runner_raw_matches(command) else None
+    deny = deny or violation is not None
     if not deny:
         return 0
     print(
@@ -1019,7 +1188,11 @@ def main() -> int:
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "deny",
-                    "permissionDecisionReason": REASON,
+                    "permissionDecisionReason": (
+                        f"Denied: runner kickoff violates {violation}. Re-emit the kickoff exactly as the runner instructions specify."
+                        if violation is not None
+                        else REASON
+                    ),
                 }
             }
         )
