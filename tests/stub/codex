@@ -144,7 +144,13 @@ case "${STUB_MODE:-ok}" in
   ok)
     emit '{"type":"item.completed","item":{"type":"agent_message","text":"stub finished the job"}}'
     turn_completed
-    printf 'STUB FINAL MESSAGE\n' >"$OUT"
+    if [ -n "${STUB_FINAL_BYTES:-}${STUB_FINAL_HEX:-}" ]; then
+      python3 -c 'import sys
+data = bytes.fromhex(sys.argv[3]) if sys.argv[3] else b"A" * int(sys.argv[2])
+open(sys.argv[1], "wb").write(data)' "$OUT" "${STUB_FINAL_BYTES:-0}" "${STUB_FINAL_HEX:-}"
+    else
+      printf 'STUB FINAL MESSAGE\n' >"$OUT"
+    fi
     ;;
   missing_usage)
     emit '{"type":"item.completed","item":{"type":"agent_message","text":"stub omitted usage"}}'

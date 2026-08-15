@@ -29,6 +29,8 @@ No version of this project has been published, so every entry below stays under 
 
 ### Changed
 
+- Capped the printed final-message section at a bounded, configurable byte budget while preserving complete artifacts and the full status block.
+  <!-- evidence: tests/run.sh :: an over-budget final message prints the bounded head and exact omission marker -->
 - Reformatted the source to a 150-column line length with no behavioural change.
   <!-- evidence: bin/codex-delegate :: "MIN_DEADLINE": FixedNumber(1, "The minimum deadline stays fixed because the public runner contract promises it."), -->
 
