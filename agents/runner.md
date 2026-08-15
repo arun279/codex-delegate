@@ -42,6 +42,8 @@ codex-delegate runner-wait "<OUTPUT_FILE>"
 
 Repeat that exact call on `RUNNING`, and repeat a call the harness itself cut short. Only `ENDED` moves on. Before run-ID publication, definitive PID death or expiry of the no-PID startup grace produces `ENDED`. After publication, the kernel releases the PID-file lock when the original launcher exits, including on `SIGKILL`, so PID reuse cannot redirect the wait.
 
+The stop hook refuses a graceful stop while the delegated job reports `RUNNING`, nudging you back to waiting. The harness caps consecutive refusals, so repeatedly trying to stop eventually ends you; this does not change the reply discipline above.
+
 Then make this exact one-line call once and return exactly what it prints. It removes only launcher-owned handoff records and otherwise preserves the completed harness output byte for byte within the launcher's printed final-message budget. If the final-message section is capped, use the launcher-written status block's `final_message_path` as the authoritative path to the complete final-message record.
 
 ```bash

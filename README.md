@@ -66,6 +66,12 @@ await agent(
 
 Both markers, a non-empty prompt body, an explicit `--sandbox`, and a deadline from 1 through 12,960 are required by the runner instructions. Put Codex `--model` and `--effort` flags in `===ARGS===`, not in the Workflow options object. The call resolves once: there is no Bash or Workflow timeout to choose and no waiter to write. The launcher mints the runner's run ID. The runner then uses launcher-owned wait and report commands; each wait returns below Bash's default timeout. Before the run ID exists, a dead launcher PID or a 60-second startup grace ends the wait. Afterward, the PID-file lock remains authoritative until the kernel releases it at launcher exit. What comes back is the launcher's output, byte-exact within the printed final-message budget and with only handoff records removed, or diagnostic output ending in a `codex-delegate:` line when no status result exists. The named `final.txt` artifact is the complete final-message record.
 
+| hook | runner behavior |
+| --- | --- |
+| `SubagentStop` | Refuses a stop while the delegated job reports `RUNNING`, nudging the runner back to waiting. Claude Code caps consecutive refusals, so a runner that repeatedly tries to stop is eventually ended by the harness. |
+
+Each refusal holds the stop for up to one launcher wait, 110 seconds as shipped, and the harness's cap on consecutive refusals bounds the total.
+
 ## From a terminal
 
 ```bash
@@ -153,7 +159,7 @@ For `read-only` and `workspace-write`, launcher state is outside Codex's writabl
 
 Cleanup owns the private process group created for Codex. Normal descendants inherit it and receive `INT`, then `TERM`, then `KILL`, each with a short grace, before the launcher returns. A group that survives the whole ladder is reported as `CLEANUP_FAILED` rather than waited on. A descendant that deliberately creates a different process group or session falls outside that boundary, and so does everything Codex is doing when the launcher itself is killed with `KILL`: cleanup needs a live launcher to run it. The launcher makes no broader orphan-detection claim.
 
-The plugin has no telemetry. Its broad `PreToolUse` hooks inspect Bash, Monitor, and Workflow call text. They deny statically recognizable direct Codex launches, empty runner prompts, and wrapper overrides; dynamic envelope semantics remain runner instructions, not hook enforcement. The `PermissionRequest` hook is inert, so Claude Code's normal permission decision applies. A `SessionStart` hook checks the platform and required binaries. It repeats its findings at every session start, because each one describes a condition that makes delegation fail or run the wrong binary until you change something: a separate `codex-delegate` ahead of this plugin on `PATH` silently receives the delegated runs. Fix the condition, or disable the plugin, and the message stops. No end-of-session reaper is installed: the launcher keeps no job registry, and a reaper would have to guess which stray processes had once been its own.
+The plugin has no telemetry. Its broad `PreToolUse` hooks inspect Bash, Monitor, and Workflow call text. They deny statically recognizable direct Codex launches, empty runner prompts, and wrapper overrides; dynamic envelope semantics remain runner instructions, not hook enforcement. The `PermissionRequest` hook is inert, so Claude Code's normal permission decision applies. A `SessionStart` hook checks the platform and required binaries. A `SubagentStop` hook reads runner transcripts and calls the plugin launcher to check delegated job status. The session-start hook repeats its findings at every session start, because each one describes a condition that makes delegation fail or run the wrong binary until you change something: a separate `codex-delegate` ahead of this plugin on `PATH` silently receives the delegated runs. Fix the condition, or disable the plugin, and the message stops. No end-of-session reaper is installed: the launcher keeps no job registry, and a reaper would have to guess which stray processes had once been its own.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete boundaries.
 

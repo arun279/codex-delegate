@@ -176,18 +176,40 @@ printf '\n== hooks and release wiring\n'
 check 'python3 -c '"'"'import json,sys; json.load(open(sys.argv[1]))'"'"' "$HOOKS" &&
        ! grep -q "SessionEnd\|session-end" "$HOOKS" && [ ! -e "$ROOT/hooks/session-end.py" ]' \
   "hook manifest installs no background end-of-session process"
+check 'python3 -c '"'"'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+entry = manifest["hooks"]["SubagentStop"]
+raise SystemExit(entry != [{"hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop.py", "args": [], "timeout": 180}]}])
+'"'"' "$HOOKS"' \
+  "SubagentStop runs the isolated runner guard with its explicit 180-second timeout"
+check 'python3 -c '"'"'
+import json, os, sys
+root, manifest_path = sys.argv[1:]
+manifest = json.load(open(manifest_path))
+commands = (
+    hook["command"]
+    for entries in manifest["hooks"].values()
+    for entry in entries
+    for hook in entry["hooks"]
+    if hook["type"] == "command"
+)
+paths = [command.replace("${CLAUDE_PLUGIN_ROOT}", root) for command in commands]
+raise SystemExit(not paths or any(not os.path.isfile(path) or not os.access(path, os.X_OK) for path in paths))
+'"'"' "$ROOT" "$HOOKS"' \
+  "every hook command resolves to a shipped executable file"
 check '! grep -q "command -v perl\|computer-use\|session-end" "$PREFLIGHT"' \
   "preflight checks only current runtime dependencies"
 check 'grep -Fq "/usr/bin/env -S python3 -I -S -c" "$PREFLIGHT" &&
        grep -Fq "sys.flags.isolated and sys.flags.no_site" "$PREFLIGHT"' \
   "preflight retains the launcher exact isolated-startup probe"
 check 'hooks_isolated=true
-       for hook in guard-bash.py guard-workflow.py permission-allow.py; do
-         [ "$(sed -n "1p" "$ROOT/hooks/$hook")" = "#!/usr/bin/env -S python3 -I -S" ] || hooks_isolated=false
+       for hook_path in "$ROOT"/hooks/*.py; do
+         [ "$(sed -n "1p" "$hook_path")" = "#!/usr/bin/env -S python3 -I -S" ] || hooks_isolated=false
          # Asserting the line is not asserting the interpreter starts. An earlier check in this repository
          # read a string and never ran the thing, so this executes each hook through its own shebang
          # and requires it to answer.
-         printf %s "{}" | "$ROOT/hooks/$hook" >/dev/null 2>&1 || hooks_isolated=false
+         printf %s "{}" | "$hook_path" >/dev/null 2>&1 || hooks_isolated=false
        done
        $hooks_isolated' \
   "every Python hook starts, through its own shebang, under the launcher's isolated interpreter"
