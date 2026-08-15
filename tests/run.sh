@@ -472,7 +472,8 @@ check 'cmp -s "$WORK/native-output.expected" "$RD/final.txt" &&
 LATE_RD=$WORK/runs/late-document
 LATE_PROMPT_GATE=$WORK/late-document-prompt-gate
 mkfifo "$LATE_PROMPT_GATE"
-STUB_MODE=native_mismatch STUB_STDIN_CAPTURE=$LATE_PROMPT_GATE \
+CODEX_DELEGATE_TERMINAL_SETTLE_LIMIT_SECONDS=10.0 \
+  STUB_MODE=native_mismatch STUB_STDIN_CAPTURE=$LATE_PROMPT_GATE \
   "$BIN" run --prompt-file "$WORK/prompt.txt" --sandbox read-only \
   --cwd "$WORK/job" --deadline 10 --model stub-model-a --effort medium \
   --runid late-document >"$WORK/late-document.out" 2>"$WORK/late-document.err" &
@@ -486,16 +487,10 @@ LATE_PID=$!
   until grep -q '"type":"turn.completed"' "$LATE_RD/events.jsonl" 2>/dev/null; do
     sleep 0.02
   done
-  (
-    sleep 0.9
-    : >"$LATE_RD/final.txt"
-  ) &
-  LATE_DUMMY_PID=$!
   sleep 1
   mv "$LATE_RD/final.txt" "$WORK/late-document.fifo"
   : >"$LATE_RD/final.txt"
   cat "$WORK/late-document.fifo" >"$LATE_RD/final.txt"
-  wait "$LATE_DUMMY_PID"
 ) &
 LATE_WRITER_PID=$!
 wait "$LATE_PID"
