@@ -6,6 +6,7 @@ set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 BIN=$ROOT/bin/codex-delegate
+GUARD_BASH=$ROOT/hooks/guard-bash.py
 RELEASE_INVARIANTS=$ROOT/scripts/release-invariants.py
 . "$ROOT/scripts/test-temp.sh"
 test_temp_create "$ROOT" checks || {
@@ -82,6 +83,435 @@ expect_silent_exit() { # expected-exit label command...
     bad "$label (exit $CASE_RC, expected silent exit $expected_rc)" "$CASE_OUT"
   fi
 }
+
+guard_request() { # guard command
+  local guard=$1 command=$2
+  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1],"run_in_background":True}}))' "$command" |
+    "$guard"
+}
+
+expect_guard() { # allow|deny label guard command
+  local expected=$1 label=$2 guard=$3 command=$4
+  run_case guard_request "$guard" "$command"
+  if [ "$CASE_RC" -ne 0 ]; then
+    bad "$label (hook exited $CASE_RC)" "$CASE_OUT"
+  elif [ "$expected" = allow ] && [ ! -s "$CASE_OUT" ]; then
+    ok "$label"
+  elif [ "$expected" = deny ] && grep -Fq '"permissionDecision": "deny"' "$CASE_OUT" &&
+    grep -Fq "Re-emit the kickoff exactly as the runner instructions specify." "$CASE_OUT"; then
+    ok "$label"
+  else
+    bad "$label (expected $expected)" "$CASE_OUT"
+  fi
+}
+
+expect_guard_denies() { # label guard command
+  local label=$1 guard=$2 command=$3
+  run_case guard_request "$guard" "$command"
+  if [ "$CASE_RC" -eq 0 ] && grep -Fq '"permissionDecision": "deny"' "$CASE_OUT"; then
+    ok "$label"
+  else
+    bad "$label (expected deny)" "$CASE_OUT"
+  fi
+}
+
+expect_mutant_allows() { # mutant label command
+  expect_guard allow "$2" "$1" "$3"
+}
+
+expect_mutant_denies() { # mutant label command
+  expect_guard_denies "$2" "$1" "$3"
+}
+
+printf '\n== runner kickoff grammar\n'
+RUNNER_DELIMITER=CODEX_DELEGATE_PROMPT_0123456789ABCDEFGHIJKLMNOPQRSTUV
+RUNNER_VALID="codex-delegate run --runner-handoff --sandbox workspace-write --cwd /tmp/job --add-dir /tmp/extra --schema ./result.json --model gpt-5.1 --effort high --deadline 7200 --network --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt bytes with \$() and quotes stay inert
+$RUNNER_DELIMITER
+"
+RUNNER_HYPHENATED_EFFORT="codex-delegate run --runner-handoff --sandbox workspace-write --cwd /tmp/My_Project/repo --add-dir /tmp/Application-Support/data --schema /tmp/result-schema.json --effort x-high --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_CATALOG_EFFORT="codex-delegate run --runner-handoff --sandbox read-only --effort X2.high_low --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_LAUNCHER_SANDBOX="codex-delegate run --runner-handoff --sandbox bogus --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_LAUNCHER_DEADLINE="codex-delegate run --runner-handoff --sandbox read-only --deadline 999999 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_QUOTED_PATH="codex-delegate run --runner-handoff --sandbox read-only --cwd '/tmp/My Project/repo' --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_ESCAPED_PATH="codex-delegate run --runner-handoff --sandbox read-only --cwd /tmp/My\\ Project/repo --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_OPTION_PATH="codex-delegate run --runner-handoff --sandbox read-only --cwd '--option-like path' --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_SUBSTITUTION="codex-delegate run --runner-handoff --sandbox read-only --model safe\$(printf x) --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_UNQUOTED="codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin <<$RUNNER_DELIMITER
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_WRONG_DELIMITER="codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin <<'SHORT'
+prompt
+SHORT
+"
+RUNNER_INTERIOR="codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+more prompt
+$RUNNER_DELIMITER
+"
+RUNNER_SECOND="codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+printf done
+"
+RUNNER_RUNID="codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --runid chosen --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_PROMPT_FILE="codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --prompt-file /tmp/prompt --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_ASSIGNMENT="SAFE=1 codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_WRAPPER="env codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_SU_CODE="su -c 'codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin'"
+RUNNER_MAKE_STDIN="make -f - <<'MAKEFILE'
+all:
+	codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin
+MAKEFILE
+"
+RUNNER_TRAP="trap 'codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --cwd \$(touch /tmp/runner-trap-side-effect) --prompt-stdin <<EOF
+\$(id -un)
+EOF' EXIT"
+RUNNER_GIT_CORE_PAGER="git -c core.pager='codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --cwd \$(touch /tmp/runner-git-side-effect) --prompt-stdin' log"
+RUNNER_GIT_CORE_SSH="git -c core.sshCommand='codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin' fetch"
+RUNNER_GIT_DIFF_EXTERNAL="git -c diff.external='codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin' diff"
+RUNNER_GIT_EXTERNAL_DIFF_ENV="GIT_EXTERNAL_DIFF='codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin' git diff"
+RUNNER_GIT_SSH_ENV="GIT_SSH_COMMAND='codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin' git fetch"
+RUNNER_GIT_PAGER_ENV="GIT_PAGER='codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin' git log"
+RUNNER_PAGER_ENV="PAGER='codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin' git log"
+RUNNER_BRACE_RUNID="codex-delegate run --runner-handoff --sandbox read-only --add-dir {/tmp,--runid,chosen} --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_BRACE_SANDBOX="codex-delegate run --runner-handoff --sandbox read-only --add-dir {/tmp,--sandbox,danger-full-access} --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_DUPLICATE_SANDBOX="codex-delegate run --runner-handoff --sandbox read-only --sandbox danger-full-access --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_GLOB="codex-delegate run --runner-handoff --sandbox read-only --add-dir /tmp/* --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_BASH_C="bash -c 'codex-delegate run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin'"
+RUNNER_BASH_C_UNTERMINATED_HEREDOC="bash -c 'codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin <<D
+INJECTED
+'"
+RUNNER_SH_C_UNTERMINATED_HEREDOC="sh -c 'codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin <<D
+INJECTED
+'"
+RUNNER_EVAL_UNTERMINATED_HEREDOC="eval 'codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin <<D
+INJECTED
+'"
+RUNNER_ENV_BASH_C_UNTERMINATED_HEREDOC="env bash -c 'codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin <<D
+INJECTED
+'"
+RUNNER_BASH_C_INDENTED_HEREDOC="bash -c 'codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin <<D
+INJECTED
+  D
+'"
+RUNNER_BASH_HERE_STRING="bash <<<'codex-delegate run --runner-handoff --sandbox danger-full-access --deadline 60 --prompt-stdin'"
+RUNNER_ENV_EXPAND="DELEGATE=codex-delegate
+\$DELEGATE run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_CONSTRUCTED="\$(printf codex-delegate) run --runner-handoff --sandbox read-only --deadline 10 --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_AMBIGUOUS="codex-delegate run --runner-handoff '"
+RUNNER_RAW_SUFFIX="run --runner-handoff --sandbox read-only --deadline 10 --cwd \$(printf PWNED) __CODEX_DELEGATE_GUARD_PART_ --prompt-stdin <<'$RUNNER_DELIMITER'
+prompt
+$RUNNER_DELIMITER
+"
+RUNNER_RAW_TAB="codex-delegate"$'\t'"$RUNNER_RAW_SUFFIX"
+RUNNER_RAW_SPACES="codex-delegate  $RUNNER_RAW_SUFFIX"
+RUNNER_RAW_CONTINUED="codex-delegate \\"
+RUNNER_RAW_CONTINUED="$RUNNER_RAW_CONTINUED
+$RUNNER_RAW_SUFFIX"
+RUNNER_DEEP='codex exec hi; echo '
+RUNNER_DEEP_SUFFIX=
+for _ in $(seq 1 300); do
+  RUNNER_DEEP="${RUNNER_DEEP}\$("
+  RUNNER_DEEP_SUFFIX=")${RUNNER_DEEP_SUFFIX}"
+done
+RUNNER_DEEP="${RUNNER_DEEP}echo hi${RUNNER_DEEP_SUFFIX}"
+
+expect_guard allow "the documented runner kickoff passes the real PreToolUse hook" "$GUARD_BASH" "$RUNNER_VALID"
+expect_guard allow "an unquoted safe path and hyphenated effort pass the real PreToolUse hook" \
+  "$GUARD_BASH" "$RUNNER_HYPHENATED_EFFORT"
+expect_guard allow "the launcher's full effort token class passes the real PreToolUse hook" \
+  "$GUARD_BASH" "$RUNNER_CATALOG_EFFORT"
+expect_guard allow "sandbox value validation remains launcher-owned" "$GUARD_BASH" "$RUNNER_LAUNCHER_SANDBOX"
+expect_guard allow "deadline value validation remains launcher-owned" "$GUARD_BASH" "$RUNNER_LAUNCHER_DEADLINE"
+expect_guard allow "a quoted read-only search for both trigger strings remains allowed" "$GUARD_BASH" \
+  "rg -n 'codex-delegate run' -- '--runner-handoff' README.md"
+expect_guard allow "quoted grep patterns for both trigger strings remain allowed" "$GUARD_BASH" \
+  "grep -e 'codex-delegate run' -e '--runner-handoff' README.md"
+expect_guard allow "rg can search the launcher for the runner handoff flag" "$GUARD_BASH" \
+  "rg -n -- --runner-handoff bin/codex-delegate"
+expect_guard allow "grep can search the launcher for the runner handoff flag" "$GUARD_BASH" \
+  "grep -n -e '--runner-handoff' bin/codex-delegate"
+expect_guard allow "git log can search launcher history for the runner handoff flag" "$GUARD_BASH" \
+  "git log -S --runner-handoff -- bin/codex-delegate"
+expect_guard allow "a comment can name the runner handoff flag beside a launcher path" "$GUARD_BASH" \
+  "wc -l bin/codex-delegate agents/runner.md # --runner-handoff"
+expect_guard deny "a quoted runner path is denied" "$GUARD_BASH" "$RUNNER_QUOTED_PATH"
+expect_guard deny "a backslash-escaped runner path is denied" "$GUARD_BASH" "$RUNNER_ESCAPED_PATH"
+expect_guard deny "an option-like quoted cwd is denied" "$GUARD_BASH" "$RUNNER_OPTION_PATH"
+expect_guard deny "argument command substitution is denied" "$GUARD_BASH" "$RUNNER_SUBSTITUTION"
+expect_guard deny "brace expansion cannot smuggle a runner run ID" "$GUARD_BASH" "$RUNNER_BRACE_RUNID"
+expect_guard deny "brace expansion cannot override the runner sandbox" "$GUARD_BASH" "$RUNNER_BRACE_SANDBOX"
+expect_guard deny "a duplicate sandbox flag cannot override the runner sandbox" "$GUARD_BASH" \
+  "$RUNNER_DUPLICATE_SANDBOX"
+expect_guard deny "pathname expansion is denied in runner arguments" "$GUARD_BASH" "$RUNNER_GLOB"
+expect_guard deny "a bash -c runner wrapper is denied" "$GUARD_BASH" "$RUNNER_BASH_C"
+expect_guard deny "an unterminated runner heredoc in bash -c is denied" \
+  "$GUARD_BASH" "$RUNNER_BASH_C_UNTERMINATED_HEREDOC"
+expect_guard deny "an unterminated runner heredoc in sh -c is denied" \
+  "$GUARD_BASH" "$RUNNER_SH_C_UNTERMINATED_HEREDOC"
+expect_guard deny "an unterminated runner heredoc in eval is denied" \
+  "$GUARD_BASH" "$RUNNER_EVAL_UNTERMINATED_HEREDOC"
+expect_guard deny "an unterminated runner heredoc in env bash -c is denied" \
+  "$GUARD_BASH" "$RUNNER_ENV_BASH_C_UNTERMINATED_HEREDOC"
+expect_guard deny "an indented runner heredoc terminator in bash -c is denied" \
+  "$GUARD_BASH" "$RUNNER_BASH_C_INDENTED_HEREDOC"
+expect_guard deny "a runner kickoff in a bash here-string is denied" \
+  "$GUARD_BASH" "$RUNNER_BASH_HERE_STRING"
+expect_guard deny "an assigned runner executable expansion is denied" "$GUARD_BASH" "$RUNNER_ENV_EXPAND"
+expect_guard deny "a command substitution producing the runner executable is denied" \
+  "$GUARD_BASH" "$RUNNER_CONSTRUCTED"
+expect_guard deny "an unquoted runner heredoc delimiter is denied" "$GUARD_BASH" "$RUNNER_UNQUOTED"
+expect_guard deny "a runner heredoc delimiter with the wrong shape is denied" "$GUARD_BASH" "$RUNNER_WRONG_DELIMITER"
+expect_guard deny "an interior runner delimiter line is denied" "$GUARD_BASH" "$RUNNER_INTERIOR"
+expect_guard deny "a second command after the runner heredoc is denied" "$GUARD_BASH" "$RUNNER_SECOND"
+expect_guard deny "a runner-selected run ID is denied" "$GUARD_BASH" "$RUNNER_RUNID"
+expect_guard deny "a runner prompt file is denied" "$GUARD_BASH" "$RUNNER_PROMPT_FILE"
+expect_guard deny "a runner environment-assignment prefix is denied" "$GUARD_BASH" "$RUNNER_ASSIGNMENT"
+expect_guard deny "a runner wrapper program is denied" "$GUARD_BASH" "$RUNNER_WRAPPER"
+expect_guard deny "a runner kickoff in su command code is denied" "$GUARD_BASH" "$RUNNER_SU_CODE"
+expect_guard deny "a runner kickoff in a stdin makefile is denied" "$GUARD_BASH" "$RUNNER_MAKE_STDIN"
+expect_guard deny "a runner kickoff in a trap handler is denied" "$GUARD_BASH" "$RUNNER_TRAP"
+expect_guard deny "a runner kickoff in git core.pager is denied" "$GUARD_BASH" "$RUNNER_GIT_CORE_PAGER"
+expect_guard deny "a runner kickoff in git core.sshCommand is denied" "$GUARD_BASH" "$RUNNER_GIT_CORE_SSH"
+expect_guard deny "a runner kickoff in git diff.external is denied" "$GUARD_BASH" "$RUNNER_GIT_DIFF_EXTERNAL"
+expect_guard deny "a runner kickoff in GIT_EXTERNAL_DIFF remains denied" "$GUARD_BASH" \
+  "$RUNNER_GIT_EXTERNAL_DIFF_ENV"
+expect_guard deny "a runner kickoff in GIT_SSH_COMMAND remains denied" "$GUARD_BASH" "$RUNNER_GIT_SSH_ENV"
+expect_guard deny "a runner kickoff in GIT_PAGER remains denied" "$GUARD_BASH" "$RUNNER_GIT_PAGER_ENV"
+expect_guard deny "a runner kickoff in PAGER remains denied" "$GUARD_BASH" "$RUNNER_PAGER_ENV"
+expect_guard deny "an unparseable raw runner signature fails closed" "$GUARD_BASH" "$RUNNER_AMBIGUOUS"
+expect_guard deny "a tab-separated unparseable runner signature fails closed" "$GUARD_BASH" "$RUNNER_RAW_TAB"
+expect_guard deny "a double-space unparseable runner signature fails closed" "$GUARD_BASH" "$RUNNER_RAW_SPACES"
+expect_guard deny "a continued-line unparseable runner signature fails closed" "$GUARD_BASH" "$RUNNER_RAW_CONTINUED"
+expect_guard_denies "a direct Codex launch remains denied after runner-validator recursion" \
+  "$GUARD_BASH" "$RUNNER_DEEP"
+
+MUTANT_ROOT=$WORK/runner-mutants
+mkdir -p "$MUTANT_ROOT"
+sed -e 's/^    if invalid_raw:/    if False:/' \
+  -e 's/^    if any(kind != "literal" for word in words for kind, _ in word.parts):/    if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/literal-protections-dropped.py"
+sed 's/^    if invalid_raw:/    if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/raw-argument-character-check-dropped.py"
+sed -e 's/^    if not heredoc.quoted:/    if False:/' \
+  -e 's/^    if header_match is None or header_match.group("delimiter") != delimiter:/    if False:/' \
+  -e 's/header_match.group("argv")/" ".join(word.raw for word in words)/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/quoted-delimiter-check-dropped.py"
+sed -e 's/^    if len(commands) != 1:/    if False:/' \
+  -e 's/^    if remainder and not remainder.isspace():/    if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/single-command-rule-dropped.py"
+sed 's@return "rule 1 (an ambiguous kickoff parse must fail closed)" if _runner_raw_matches(command) else None@return None@' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/ambiguity-branch-made-allow.py"
+sed 's/^        return runner$/        return False/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/nested-parse-failure-made-allow.py"
+sed 's/^        deny = starts_codex(command)$/        runner_kickoff_violation(command)\n        deny = starts_codex(command)/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/runner-validation-before-direct-check.py"
+sed 's@^RUNNER_DELIMITER = .*@RUNNER_DELIMITER = re.compile(r"^.+$")@' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/delimiter-shape-check-dropped.py"
+sed 's@^RUNNER_VALUE_FLAGS = .*@RUNNER_VALUE_FLAGS = RUNNER_FLAGS | {"--runid", "--prompt-file"}@' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/forbidden-flags-allowed.py"
+sed -e 's/^    if assigned or len(words) != len(simple.words):/    if False:/' \
+  -e 's/^    if invalid_raw:/    if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/assignment-prefix-check-dropped.py"
+awk '
+  $0 == "    if assigned or len(words) != len(simple.words):" { print "    if False:"; next }
+  $0 == "    if invalid_raw:" { print "    if False:"; next }
+  { print }
+  $0 == "    del local" {
+    print "    if words and _resolve_word(words[0], {}) == \"env\":"
+    print "        words = words[1:]"
+  }
+' "$GUARD_BASH" >"$MUTANT_ROOT/wrapper-program-check-dropped.py"
+sed 's/^        if _runner_raw_matches(command) and _scan_shell(command, {}, {}, runner=True):/        if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/nested-runner-check-dropped.py"
+sed 's/^    if runner and name == "su":/    if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/su-code-sink-check-dropped.py"
+sed 's/^        if effective is not None and runner and _program_name(effective\[0\]) == "make":/        if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/make-stdin-code-sink-check-dropped.py"
+sed 's/^    if name == "trap" and args:/    if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/trap-code-sink-check-dropped.py"
+sed 's/^    if name == "git":/    if False:/' \
+  "$GUARD_BASH" >"$MUTANT_ROOT/git-config-code-sink-check-dropped.py"
+awk '
+  { print }
+  $0 == "    stripped = _strip_heredoc_bodies(command)" {
+    print "    if \"codex-delegate\" in command:"
+    print "        return \"strictness mutant\""
+  }
+' "$GUARD_BASH" >"$MUTANT_ROOT/any-runner-text-denied.py"
+chmod 700 "$MUTANT_ROOT"/*.py
+
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the documented-kickoff allow check" "$RUNNER_VALID"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the hyphenated-effort allow check" \
+  "$RUNNER_HYPHENATED_EFFORT"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the full-effort-token allow check" \
+  "$RUNNER_CATALOG_EFFORT"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the launcher-owned sandbox allow check" \
+  "$RUNNER_LAUNCHER_SANDBOX"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the launcher-owned deadline allow check" \
+  "$RUNNER_LAUNCHER_DEADLINE"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the rg-search allow check" \
+  "rg -n 'codex-delegate run' -- '--runner-handoff' README.md"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the grep-search allow check" \
+  "grep -e 'codex-delegate run' -e '--runner-handoff' README.md"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the launcher-target rg check" \
+  "rg -n -- --runner-handoff bin/codex-delegate"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the launcher-target grep check" \
+  "grep -n -e '--runner-handoff' bin/codex-delegate"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the launcher-target git-log check" \
+  "git log -S --runner-handoff -- bin/codex-delegate"
+expect_mutant_denies "$MUTANT_ROOT/any-runner-text-denied.py" \
+  "the any-runner-text-denied mutant is killed by the launcher-target comment check" \
+  "wc -l bin/codex-delegate agents/runner.md # --runner-handoff"
+expect_mutant_allows "$MUTANT_ROOT/literal-protections-dropped.py" \
+  "the literal-protections-dropped mutant is killed by the substitution check" "$RUNNER_SUBSTITUTION"
+expect_mutant_allows "$MUTANT_ROOT/literal-protections-dropped.py" \
+  "the literal-protections-dropped mutant is killed by the constructed-executable check" \
+  "$RUNNER_CONSTRUCTED"
+expect_mutant_allows "$MUTANT_ROOT/raw-argument-character-check-dropped.py" \
+  "the raw-argument-character-check-dropped mutant is killed by the run-ID brace check" \
+  "$RUNNER_BRACE_RUNID"
+expect_mutant_allows "$MUTANT_ROOT/raw-argument-character-check-dropped.py" \
+  "the raw-argument-character-check-dropped mutant is killed by the sandbox brace check" \
+  "$RUNNER_BRACE_SANDBOX"
+expect_mutant_allows "$MUTANT_ROOT/raw-argument-character-check-dropped.py" \
+  "the raw-argument-character-check-dropped mutant is killed by the quoted-path check" \
+  "$RUNNER_QUOTED_PATH"
+expect_mutant_allows "$MUTANT_ROOT/raw-argument-character-check-dropped.py" \
+  "the raw-argument-character-check-dropped mutant is killed by the escaped-path check" \
+  "$RUNNER_ESCAPED_PATH"
+expect_mutant_allows "$MUTANT_ROOT/raw-argument-character-check-dropped.py" \
+  "the raw-argument-character-check-dropped mutant is killed by the option-like-path check" \
+  "$RUNNER_OPTION_PATH"
+expect_mutant_allows "$MUTANT_ROOT/raw-argument-character-check-dropped.py" \
+  "the raw-argument-character-check-dropped mutant is killed by the pathname-expansion check" \
+  "$RUNNER_GLOB"
+expect_mutant_allows "$MUTANT_ROOT/quoted-delimiter-check-dropped.py" \
+  "the quoted-delimiter-check-dropped mutant is killed by the unquoted-delimiter check" "$RUNNER_UNQUOTED"
+expect_mutant_allows "$MUTANT_ROOT/single-command-rule-dropped.py" \
+  "the single-command-rule-dropped mutant is killed by the interior-delimiter check" "$RUNNER_INTERIOR"
+expect_mutant_allows "$MUTANT_ROOT/single-command-rule-dropped.py" \
+  "the single-command-rule-dropped mutant is killed by the trailing-command check" "$RUNNER_SECOND"
+expect_mutant_allows "$MUTANT_ROOT/ambiguity-branch-made-allow.py" \
+  "the ambiguity-branch-made-allow mutant is killed by the ambiguous-signature check" "$RUNNER_AMBIGUOUS"
+expect_mutant_allows "$MUTANT_ROOT/ambiguity-branch-made-allow.py" \
+  "the ambiguity-branch-made-allow mutant is killed by the tab-separated-signature check" "$RUNNER_RAW_TAB"
+expect_mutant_allows "$MUTANT_ROOT/ambiguity-branch-made-allow.py" \
+  "the ambiguity-branch-made-allow mutant is killed by the double-space-signature check" "$RUNNER_RAW_SPACES"
+expect_mutant_allows "$MUTANT_ROOT/ambiguity-branch-made-allow.py" \
+  "the ambiguity-branch-made-allow mutant is killed by the continued-line-signature check" "$RUNNER_RAW_CONTINUED"
+expect_mutant_allows "$MUTANT_ROOT/runner-validation-before-direct-check.py" \
+  "the runner-validation-before-direct-check mutant is killed by the recursion check" "$RUNNER_DEEP"
+expect_mutant_allows "$MUTANT_ROOT/delimiter-shape-check-dropped.py" \
+  "the delimiter-shape-check-dropped mutant is killed by the delimiter-shape check" "$RUNNER_WRONG_DELIMITER"
+expect_mutant_allows "$MUTANT_ROOT/forbidden-flags-allowed.py" \
+  "the forbidden-flags-allowed mutant is killed by the run-ID check" "$RUNNER_RUNID"
+expect_mutant_allows "$MUTANT_ROOT/forbidden-flags-allowed.py" \
+  "the forbidden-flags-allowed mutant is killed by the prompt-file check" "$RUNNER_PROMPT_FILE"
+expect_mutant_allows "$MUTANT_ROOT/assignment-prefix-check-dropped.py" \
+  "the assignment-prefix-check-dropped mutant is killed by the assignment-prefix check" "$RUNNER_ASSIGNMENT"
+expect_mutant_allows "$MUTANT_ROOT/wrapper-program-check-dropped.py" \
+  "the wrapper-program-check-dropped mutant is killed by the wrapper check" "$RUNNER_WRAPPER"
+expect_mutant_allows "$MUTANT_ROOT/su-code-sink-check-dropped.py" \
+  "the su-code-sink-check-dropped mutant is killed by the su command-code check" "$RUNNER_SU_CODE"
+expect_mutant_allows "$MUTANT_ROOT/make-stdin-code-sink-check-dropped.py" \
+  "the make-stdin-code-sink-check-dropped mutant is killed by the stdin-makefile check" \
+  "$RUNNER_MAKE_STDIN"
+expect_mutant_allows "$MUTANT_ROOT/trap-code-sink-check-dropped.py" \
+  "the trap-code-sink-check-dropped mutant is killed by the trap-handler check" "$RUNNER_TRAP"
+expect_mutant_allows "$MUTANT_ROOT/git-config-code-sink-check-dropped.py" \
+  "the git-config-code-sink-check-dropped mutant is killed by the inline-pager check" \
+  "$RUNNER_GIT_CORE_PAGER"
+expect_mutant_allows "$MUTANT_ROOT/nested-runner-check-dropped.py" \
+  "the nested-runner-check-dropped mutant is killed by the bash wrapper check" "$RUNNER_BASH_C"
+expect_mutant_allows "$MUTANT_ROOT/nested-parse-failure-made-allow.py" \
+  "the nested-parse-failure-made-allow mutant is killed by the malformed bash wrapper check" \
+  "$RUNNER_BASH_C_UNTERMINATED_HEREDOC"
+expect_mutant_allows "$MUTANT_ROOT/nested-parse-failure-made-allow.py" \
+  "the nested-parse-failure-made-allow mutant is killed by the malformed sh wrapper check" \
+  "$RUNNER_SH_C_UNTERMINATED_HEREDOC"
+expect_mutant_allows "$MUTANT_ROOT/nested-parse-failure-made-allow.py" \
+  "the nested-parse-failure-made-allow mutant is killed by the malformed eval check" \
+  "$RUNNER_EVAL_UNTERMINATED_HEREDOC"
+expect_mutant_allows "$MUTANT_ROOT/nested-parse-failure-made-allow.py" \
+  "the nested-parse-failure-made-allow mutant is killed by the malformed env bash wrapper check" \
+  "$RUNNER_ENV_BASH_C_UNTERMINATED_HEREDOC"
+expect_mutant_allows "$MUTANT_ROOT/nested-parse-failure-made-allow.py" \
+  "the nested-parse-failure-made-allow mutant is killed by the indented terminator check" \
+  "$RUNNER_BASH_C_INDENTED_HEREDOC"
+expect_mutant_allows "$MUTANT_ROOT/nested-runner-check-dropped.py" \
+  "the nested-runner-check-dropped mutant is killed by the bash here-string check" \
+  "$RUNNER_BASH_HERE_STRING"
+expect_mutant_allows "$MUTANT_ROOT/nested-runner-check-dropped.py" \
+  "the nested-runner-check-dropped mutant is killed by the assigned expansion check" \
+  "$RUNNER_ENV_EXPAND"
 
 tripwire() {
   printf '%s\n' "$1" | python3 "$RELEASE_INVARIANTS" dynamic-eval

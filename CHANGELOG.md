@@ -70,6 +70,8 @@ No version of this project has been published, so every entry below stays under 
 
 ### Security
 
+- Added a fail-closed validator for the documented runner kickoff shell shape and flag allowlist, with raw argv tokens restricted to letters, digits, `.`, `_`, `/`, `~`, `=`, `+`, and `-`. Parsed commands stay allowed when the inspected executable positions and code sinks contain no runner invocation. The launcher remains authoritative for flag value semantics.
+  <!-- evidence: tests/checks.sh :: a runner kickoff in a trap handler is denied -->
 - Rejected `workspace-write` runs whose writable roots overlap the owner-only run store.
   <!-- evidence: tests/run.sh :: workspace-write cannot overlap launcher control state -->
 

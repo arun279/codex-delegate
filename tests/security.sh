@@ -151,9 +151,12 @@ check 'python3 "$ROOT/tests/status_schema.py" "$WORK/runs/secure/status.json"' \
   "the security verdict fixture has exactly 17 status fields"
 
 head_ "documented trust boundary"
-check 'grep -q "danger-full-access" "$SECURITY" && grep -q "status" "$SECURITY" &&
-       grep -q "process group" "$SECURITY"' \
-  "SECURITY.md states the remaining process and danger-full-access limits"
+check 'grep -q "raw Bash or Monitor command text contains.*runner-handoff" "$SECURITY" &&
+       grep -q "parsed read-only searches whose inspected positions contain no invocation" "$SECURITY" &&
+       grep -q "code sink outside the modeled set is not inspected" "$SECURITY" &&
+       grep -q "guard makes them inert heredoc data, but does not verify" "$SECURITY" &&
+       grep -q "danger-full-access" "$SECURITY" && grep -q "process group" "$SECURITY"' \
+  "SECURITY.md states the scoped kickoff control and remaining trust limits"
 check 'grep -q "prompt.txt" "$PRIVACY" && grep -q "stdin" "$PRIVACY"' \
   "PRIVACY.md discloses prompt storage and child transport"
 
