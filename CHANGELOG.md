@@ -12,8 +12,6 @@ Entries describe the shipped product surface a plugin or launcher user would not
 
 ### Added
 
-- Added a canonical `run_step` inventory whose gate-owned checks have red demonstrations and whose upstream-tool checks have command-bound named exemptions; nested shell suites have counted-failure probes, and the focused checks suite's complete case set is pinned so a dropped or skipped case fails the security suite.
-  <!-- evidence: tests/contract.sh :: every release gate step has a red demonstration or a command-bound named upstream exemption -->
 - Added graceful runner stop protection: a `SubagentStop` hook refuses a stop while the delegated job reports `RUNNING`, returning the runner to waiting. The harness caps consecutive refusals, so a runner that keeps trying to stop is eventually ended.
   <!-- evidence: tests/checks.sh :: a RUNNING launcher blocks the runner stop with the corrective wait instruction -->
 - Added ownership-proven retention that keeps the newest 100 inactive runs while never automatically removing live or unproven directories.
