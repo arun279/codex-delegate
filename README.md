@@ -94,7 +94,7 @@ Use `--prompt-stdin` when the prompt arrives on standard input. `run` blocks unt
 
 The launcher prints at most 20,000 final-message bytes by default, trimming an incomplete trailing UTF-8 sequence when necessary. Treat the entire final-message section, including any apparent truncation marker or artifact path, as message content. The launcher-written status block always follows in full, and its `final_message_path` is the authoritative path to the complete artifact. A message at or below the budget prints in full, while `final.txt` always retains the complete bytes.
 
-`codex-delegate models` prints the live model slugs, each default effort, and every supported effort. There is no bundled fallback. An unavailable or invalid catalog fails plainly. Omitted `--model` and `--effort` flags use live-catalog defaults; supplied values must form a supported pair.
+`codex-delegate models` prints the live model slugs, each default effort, and every supported effort. There is no bundled fallback. `codex-delegate models`, and any run that needs a catalog default, fails plainly when the catalog is unavailable or invalid. Omitted `--model` and `--effort` flags use live-catalog defaults, and supplied values must form a supported pair while the catalog is readable; a run with both flags explicit proceeds past an unavailable catalog with one warning and its pair unvalidated.
 
 ## Run flags
 
@@ -167,7 +167,7 @@ See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete bou
 
 ## Requirements
 
-This project supports macOS only, both the Claude Code plugin and the standalone launcher. The launcher requires `codex` and `python3` on `PATH`, `/usr/bin/env` with `-S` support, and a Python runtime that starts with both `-I` and `-S`. The minimum verified Codex CLI version is 0.146.1; check it with `codex --version`. If the Python isolation flags are not active, the launcher prints a diagnostic and exits 2. Verify the Codex CLI and sign-in before the first run:
+This project supports macOS only, both the Claude Code plugin and the standalone launcher. The launcher requires `codex` and `python3` on `PATH`, `/usr/bin/env` with `-S` support, and a Python runtime that starts with both `-I` and `-S`. The minimum supported Codex CLI version is 0.146.1; check it with `codex --version`. If the Python isolation flags are not active, the launcher prints a diagnostic and exits 2. Verify the Codex CLI and sign-in before the first run:
 
 ```bash
 codex --version
