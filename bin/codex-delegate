@@ -463,8 +463,7 @@ def allocate_run(root: str, requested: str | None, runner_handoff: bool) -> tupl
         raise UserError("--runid may contain only letters, digits, '.', '_', and '-'")
     while True:
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-        generated = f"runner-{secrets.token_hex(16)}" if runner_handoff else f"{stamp}-{os.getpid()}-{secrets.token_hex(3)}"
-        runid = requested or generated
+        runid = requested or (f"runner-{secrets.token_hex(16)}" if runner_handoff else f"{stamp}-{os.getpid()}-{secrets.token_hex(3)}")
         run_dir = os.path.join(root, runid)
         try:
             os.mkdir(run_dir, 0o700)
@@ -798,12 +797,7 @@ def store_prompt(args: Arguments, path: str, notice: SignalNotice, deadline_at: 
                         notice,
                         deadline_at,
                     )
-            try:
-                os.fsync(output.fileno())
-            except OSError as error:
-                raise UserError(f"cannot store prompt: {error}") from error
-    except UserError:
-        raise
+            os.fsync(output.fileno())
     except OSError as error:
         raise UserError(f"cannot store prompt: {error}") from error
     if os.path.getsize(path) == 0:
@@ -910,7 +904,7 @@ class Capture:
         if kind == "turn.completed":
             usage = event.get("usage")
             if isinstance(usage, dict):
-                self.usage = cast(dict[str, object], usage)
+                self.usage = usage
         else:
             error = event.get("error")
             if isinstance(error, dict) and isinstance(error.get("message"), str):
@@ -1223,12 +1217,11 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
             )
         except OSError as error:
             capture.finish()
-            launch_diagnostic = f"could not launch Codex: {error}"
             status = status_for(
                 context,
                 "LAUNCH_ERROR",
                 EXIT["LAUNCH_ERROR"],
-                launch_diagnostic,
+                f"could not launch Codex: {error}",
                 None,
                 time.monotonic() - started_mono,
                 None,
@@ -1239,19 +1232,15 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
 
         fd = cast(BinaryIO, process.stdout).fileno()
         watcher: selectors.BaseSelector | None = None
-        process_code: int | None = None
         outcome = "stream_error"
-        clean = False
         try:
             os.set_blocking(fd, False)
             watcher = selectors.DefaultSelector()
             watcher.register(fd, selectors.EVENT_READ)
             eof = False
-            waiting = True
-            while waiting:
+            while True:
                 now = time.monotonic()
-                timeout = min(0.1, max(0.0, deadline_at - now))
-                if watcher.select(timeout):
+                if watcher.select(min(0.1, max(0.0, deadline_at - now))):
                     eof = read_pipe(fd, capture) or eof
                 process_code = process.poll()
                 now = time.monotonic()
@@ -1266,7 +1255,7 @@ def run(args: Arguments, codex: str, models: list[Model] | None, tunables: Resol
                     candidates.append((now, "exit"))
                 if candidates:
                     outcome = min(candidates, key=lambda item: item[0])[1]
-                    waiting = False
+                    break
 
             if outcome == "terminal":
                 settle_until = time.monotonic() + tunables.terminal_settle_limit_seconds
