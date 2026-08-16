@@ -1,0 +1,15 @@
+Claude marketplace validation	claude plugin validate	falsifiable upstream: claude plugin validate owns malformed-marketplace rejection
+Claude plugin validation	claude plugin validate	falsifiable upstream: claude plugin validate owns malformed-plugin rejection
+ruff check	run_tool ruff	falsifiable upstream: ruff owns lint-rule rejection
+ruff format	run_tool ruff	falsifiable upstream: ruff owns format rejection
+ruff security	run_tool ruff	falsifiable upstream: ruff owns security-rule rejection
+mypy strict	run_tool mypy	falsifiable upstream: mypy owns type-error rejection
+Python dead code	run_tool vulture	falsifiable upstream: vulture owns dead-code rejection
+POSIX preflight shellcheck	run_tool shellcheck	falsifiable upstream: shellcheck owns POSIX shell diagnostics
+Bash shellcheck	run_tool shellcheck	falsifiable upstream: shellcheck owns Bash diagnostics
+shell format	run_tool shfmt	falsifiable upstream: shfmt owns shell-format rejection
+shell syntax	bash -n	falsifiable upstream: bash -n owns shell-syntax rejection
+Markdown lint	run_tool markdownlint	falsifiable upstream: markdownlint owns Markdown diagnostics
+document format	run_tool prettier	falsifiable upstream: prettier owns document-format rejection
+GitHub workflow lint	run_tool actionlint	falsifiable upstream: actionlint owns workflow diagnostics
+secret scan	run_tool gitleaks	falsifiable upstream: gitleaks owns secret-pattern rejection

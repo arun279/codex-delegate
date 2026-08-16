@@ -1,0 +1,203 @@
+the documented runner kickoff passes the real PreToolUse hook
+an unquoted safe path and hyphenated effort pass the real PreToolUse hook
+the launcher's full effort token class passes the real PreToolUse hook
+sandbox value validation remains launcher-owned
+deadline value validation remains launcher-owned
+a quoted read-only search for both trigger strings remains allowed
+quoted grep patterns for both trigger strings remain allowed
+rg can search the launcher for the runner handoff flag
+grep can search the launcher for the runner handoff flag
+git log can search launcher history for the runner handoff flag
+a comment can name the runner handoff flag beside a launcher path
+a quoted runner path is denied
+a backslash-escaped runner path is denied
+an option-like quoted cwd is denied
+argument command substitution is denied
+brace expansion cannot smuggle a runner run ID
+brace expansion cannot override the runner sandbox
+a duplicate sandbox flag cannot override the runner sandbox
+pathname expansion is denied in runner arguments
+a bash -c runner wrapper is denied
+an unterminated runner heredoc in bash -c is denied
+an unterminated runner heredoc in sh -c is denied
+an unterminated runner heredoc in eval is denied
+an unterminated runner heredoc in env bash -c is denied
+an indented runner heredoc terminator in bash -c is denied
+a runner kickoff in a bash here-string is denied
+an assigned runner executable expansion is denied
+a command substitution producing the runner executable is denied
+an unquoted runner heredoc delimiter is denied
+a runner heredoc delimiter with the wrong shape is denied
+an interior runner delimiter line is denied
+a second command after the runner heredoc is denied
+a runner-selected run ID is denied
+a runner prompt file is denied
+a runner environment-assignment prefix is denied
+a runner wrapper program is denied
+a runner kickoff in su command code is denied
+a runner kickoff in a stdin makefile is denied
+a runner kickoff in a trap handler is denied
+a runner kickoff in git core.pager is denied
+a runner kickoff in git core.sshCommand is denied
+a runner kickoff in git diff.external is denied
+a runner kickoff in GIT_EXTERNAL_DIFF remains denied
+a runner kickoff in GIT_SSH_COMMAND remains denied
+a runner kickoff in GIT_PAGER remains denied
+a runner kickoff in PAGER remains denied
+an unparseable raw runner signature fails closed
+a tab-separated unparseable runner signature fails closed
+a double-space unparseable runner signature fails closed
+a continued-line unparseable runner signature fails closed
+a direct Codex launch remains denied after runner-validator recursion
+the any-runner-text-denied mutant is killed by the documented-kickoff allow check
+the any-runner-text-denied mutant is killed by the hyphenated-effort allow check
+the any-runner-text-denied mutant is killed by the full-effort-token allow check
+the any-runner-text-denied mutant is killed by the launcher-owned sandbox allow check
+the any-runner-text-denied mutant is killed by the launcher-owned deadline allow check
+the any-runner-text-denied mutant is killed by the rg-search allow check
+the any-runner-text-denied mutant is killed by the grep-search allow check
+the any-runner-text-denied mutant is killed by the launcher-target rg check
+the any-runner-text-denied mutant is killed by the launcher-target grep check
+the any-runner-text-denied mutant is killed by the launcher-target git-log check
+the any-runner-text-denied mutant is killed by the launcher-target comment check
+the literal-protections-dropped mutant is killed by the substitution check
+the literal-protections-dropped mutant is killed by the constructed-executable check
+the raw-argument-character-check-dropped mutant is killed by the run-ID brace check
+the raw-argument-character-check-dropped mutant is killed by the sandbox brace check
+the raw-argument-character-check-dropped mutant is killed by the quoted-path check
+the raw-argument-character-check-dropped mutant is killed by the escaped-path check
+the raw-argument-character-check-dropped mutant is killed by the option-like-path check
+the raw-argument-character-check-dropped mutant is killed by the pathname-expansion check
+the quoted-delimiter-check-dropped mutant is killed by the unquoted-delimiter check
+the single-command-rule-dropped mutant is killed by the interior-delimiter check
+the single-command-rule-dropped mutant is killed by the trailing-command check
+the ambiguity-branch-made-allow mutant is killed by the ambiguous-signature check
+the ambiguity-branch-made-allow mutant is killed by the tab-separated-signature check
+the ambiguity-branch-made-allow mutant is killed by the double-space-signature check
+the ambiguity-branch-made-allow mutant is killed by the continued-line-signature check
+the runner-validation-before-direct-check mutant is killed by the recursion check
+the delimiter-shape-check-dropped mutant is killed by the delimiter-shape check
+the forbidden-flags-allowed mutant is killed by the run-ID check
+the forbidden-flags-allowed mutant is killed by the prompt-file check
+the assignment-prefix-check-dropped mutant is killed by the assignment-prefix check
+the wrapper-program-check-dropped mutant is killed by the wrapper check
+the su-code-sink-check-dropped mutant is killed by the su command-code check
+the make-stdin-code-sink-check-dropped mutant is killed by the stdin-makefile check
+the trap-code-sink-check-dropped mutant is killed by the trap-handler check
+the git-config-code-sink-check-dropped mutant is killed by the inline-pager check
+the nested-runner-check-dropped mutant is killed by the bash wrapper check
+the nested-parse-failure-made-allow mutant is killed by the malformed bash wrapper check
+the nested-parse-failure-made-allow mutant is killed by the malformed sh wrapper check
+the nested-parse-failure-made-allow mutant is killed by the malformed eval check
+the nested-parse-failure-made-allow mutant is killed by the malformed env bash wrapper check
+the nested-parse-failure-made-allow mutant is killed by the indented terminator check
+the nested-runner-check-dropped mutant is killed by the bash here-string check
+the nested-runner-check-dropped mutant is killed by the assigned expansion check
+a RUNNING launcher blocks the runner stop with the corrective wait instruction
+the RUNNING case kills a transcript_path-for-agent_transcript_path mutant
+ENDED allows the stop and kills an ENDED-blocking mutant
+a non-runner allows the stop and kills an agent-type-check mutant
+missing and unreadable agent transcripts allow and kill main-transcript fallback mutants
+a missing launcher allows the stop and kills an uncaught-launch-error mutant
+only kickoff-correlated results supply the path and the last-record mutant fails
+real harness prose yields a bare path and kills a greedy-regex mutant
+the whole transcript is scanned and a last-200-lines mutant fails
+a torn UTF-8 trailing record preserves kickoff protection and kills the whole-file mutant
+the shipped launcher passes by absolute path without plugin bin on hook PATH
+an empty plugin root produces a preflight diagnostic
+a missing shipped launcher produces a preflight diagnostic
+a directory at the shipped launcher path produces a preflight diagnostic
+a different codex-delegate earlier on PATH produces a preflight diagnostic
+SessionStart inspects but does not spawn the shipped launcher
+a Codex CLI below the verified floor produces a warning
+the current verified Codex CLI version produces no warning
+a prerelease Codex CLI above the floor produces no warning
+a failing Codex CLI version probe is non-blocking
+a wrapper with a hanging child is bounded and non-blocking
+a local file URI cannot hide an absolute macOS home path
+benign base64 candidates cannot hide a later encoded home path
+benign aggregate base64 is scanned without aborting the scan
+a one-MiB base64 decoy cannot hide a later encoded home path
+a one-MiB hex decoy cannot hide a later encoded home path
+an overlong base64 run still scans its bounded decoded prefix
+an overlong hexadecimal run still scans its bounded decoded prefix
+an unpadded base64 run retains its final decoded bytes
+decoded candidates remain per-run bounded instead of forming an aggregate view
+marketplace owner.name rejects an integer
+marketplace plugin source rejects an integer
+matching non-SemVer package and plugin versions are rejected
+release-tag validation also rejects matching non-SemVer versions
+SemVer prerelease identifiers are accepted
+SemVer build metadata identifiers are accepted
+marketplace owner.name rejects hidden control characters
+package.json pins the account-funded usage disclosure
+.claude-plugin/plugin.json pins the account-funded usage disclosure
+.claude-plugin/marketplace.json pins the account-funded usage disclosure
+all unmodified description copies satisfy the manifest disclosures
+an unmodified publication copy passes
+agents/runner.md is covered by publication copy
+commands/uninstall.md is covered by publication copy
+skills/routing/SKILL.md is covered by publication copy
+non-UTF-8 publication copy produces a clean diagnostic
+publication copy passes after every mutation is removed
+package.json pins the OpenAI data-egress disclosure
+.claude-plugin/plugin.json pins the OpenAI data-egress disclosure
+.claude-plugin/marketplace.json pins the OpenAI data-egress disclosure
+a product-surface diff without a changelog entry is rejected
+a product-surface diff with an evidenced changelog entry is accepted
+a source tree without Git metadata skips product-diff coverage
+a root commit without a comparison target skips product-diff coverage
+a nonexistent Claude model is rejected
+documented model claude-fable-5 is accepted
+documented model claude-mythos-5 is accepted
+documented model claude-mythos-preview is accepted
+documented model claude-opus-5[1m] is accepted
+documented model claude-3-5-sonnet-latest is accepted
+documented model claude-sonnet-4-5@20250929 is accepted
+documented model claude-opus-4-5@20251101 is accepted
+documented model claude-haiku-4-5@20251001 is accepted
+documented model claude-opus-4-1@20250805 is accepted
+documented model best is accepted
+documented model fable is accepted
+documented model opus[1m] is accepted
+an empty frontmatter target surface fails closed
+the AST tripwire catches getattr access to os.system
+the AST tripwire catches subscripted builtins eval
+the AST tripwire catches an aliased eval
+the AST tripwire fails closed on a nonliteral os getattr
+the AST tripwire fails closed on a nonliteral os subscript
+the AST tripwire fails closed on a computed os getattr name
+the AST tripwire fails closed on a nonliteral builtins getattr
+the AST tripwire catches importlib submodules
+the AST tripwire catches importlib from-imports
+the AST tripwire catches runpy imports
+the AST tripwire retains unresolved dotted eval coverage
+the AST tripwire retains unresolved dotted exec coverage
+the AST tripwire retains unresolved dotted import coverage
+the AST tripwire resolves sys.modules dispatch
+the AST tripwire resolves an imported sys alias
+the AST tripwire resolves an imported builtins alias
+the AST tripwire catches globals dispatch
+the AST tripwire retains direct os execution coverage
+the AST tripwire retains os exec-family coverage
+the AST tripwire retains os spawn-family coverage
+the AST tripwire retains os posix-spawn coverage
+the AST tripwire retains os popen coverage
+the AST tripwire catches builtins.compile
+the AST tripwire retains bare compile coverage
+the AST tripwire retains bare exec coverage
+the AST tripwire retains bare import coverage
+the AST tripwire catches a dangerous from-import alias
+the AST tripwire catches a dangerous os from-import alias
+the AST tripwire catches an imported module alias
+the AST tripwire catches an assigned module alias
+the AST tripwire catches a tuple-unpacked callable alias
+the AST tripwire resolves reverse-ordered callable alias chains
+the AST tripwire allows re.compile
+the AST tripwire analyzes executed calls rather than inert text
+a self-referential module alias terminates cleanly
+unparseable Python is not reported as clean
+a null byte is reported as unparseable rather than dangerous
+non-UTF-8 input is not reported as clean
+the isolation regression distinguishes the launcher from a de-isolated mutant
+the security assertion names the specific os dispatch scope it checks
