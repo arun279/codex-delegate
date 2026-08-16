@@ -1,0 +1,22 @@
+contract suite	suite:tests/contract.sh
+npm pack guard suite	npm-pack
+security suite	suite:tests/security.sh
+run suite	suite:tests/run.sh
+lifecycle suite	suite:tests/lifecycle.sh
+runner handoff suite	suite:tests/runner-handoff.sh
+release workflow suite	suite:tests/release-workflow.sh
+repository push	repository-push
+corpus replay	corpus
+determinism	determinism
+plugin install lifecycle	suite:tests/plugin-lifecycle.sh
+npm package contents	npm-pack
+privacy scan	privacy
+manifest invariants	manifests
+version invariants	versions
+changelog evidence	changelog
+publication copy	publication-copy
+release version invariants	release-versions
+frontmatter lint	frontmatter
+documentation claim check	claim-check
+runner protocol	runner-protocol
+deliberate hanging step	timeout

@@ -42,10 +42,15 @@ permission_request() {
 }
 
 head_ "false-green regression suite"
-bash "$ROOT/tests/checks.sh"
+CHECKS_OUT=$WORK/checks.out
+CHECKS_CASES=$WORK/checks-cases.actual
+bash "$ROOT/tests/checks.sh" >"$CHECKS_OUT" 2>&1
 RC=$?
-check '[ "$RC" = 0 ]' \
-  "the focused hardening checks are reached by the release gate"
+cat "$CHECKS_OUT"
+sed -n 's/^  ok   //p' "$CHECKS_OUT" >"$CHECKS_CASES"
+check '[ "$RC" = 0 ] &&
+       cmp -s "$ROOT/tests/red-fixtures/checks-cases.txt" "$CHECKS_CASES"' \
+  "the focused hardening suite runs its complete pinned case set"
 
 head_ "normal permission boundary"
 SENSITIVE='codex-delegate run --sandbox danger-full-access --prompt-file ~/.aws/credentials'
