@@ -6,7 +6,9 @@ Create a granular npm token with read/write access, permission to publish the ne
 
 ## Release procedure
 
-On `main`, manually dispatch the `release` workflow and provide the version to publish. The input must match the versions in `package.json` and `.claude-plugin/plugin.json`; the workflow derives the plugin tag from that version.
+Merge a pull request that bumps the version in `package.json` and `.claude-plugin/plugin.json` and moves the changelog's Unreleased entries into a matching release section. When push CI completes successfully on `main`, the release workflow runs automatically: it does nothing when the `NPM_TOKEN` secret is absent or when the version's tag already exists, so ordinary merges are no-ops and automatic release stays off until the secret is configured.
+
+Alternatively, manually dispatch the `release` workflow and provide the version to publish. Either way the version in play must match both manifests; the workflow derives the plugin tag from that version.
 
 Before creating a tag, GitHub release, or npm publication, the job independently verifies:
 
