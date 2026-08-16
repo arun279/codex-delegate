@@ -74,6 +74,8 @@ Entries describe the shipped product surface a plugin or launcher user would not
 
 ### Security
 
+- Denied the `codex e` exec alias and the standalone `codex exec-server` service as direct Codex launches, with the alias keeping `exec`'s approval-prompt exception.
+  <!-- evidence: tests/checks.sh :: the exec alias starts a turn and is denied -->
 - Added a fail-closed validator for the documented runner kickoff shell shape and flag allowlist, with raw argv tokens restricted to letters, digits, `.`, `_`, `/`, `~`, `=`, `+`, and `-`. Parsed commands stay allowed when the inspected executable positions and code sinks contain no runner invocation. The launcher remains authoritative for flag value semantics.
   <!-- evidence: tests/checks.sh :: a runner kickoff in a trap handler is denied -->
 - Rejected `workspace-write` runs whose writable roots overlap the owner-only run store.

@@ -9,6 +9,9 @@ rg can search the launcher for the runner handoff flag
 grep can search the launcher for the runner handoff flag
 git log can search launcher history for the runner handoff flag
 a comment can name the runner handoff flag beside a launcher path
+the exec alias starts a turn and is denied
+the standalone exec-server subcommand is denied
+the exec alias with an approval prompt stays allowed like exec
 a quoted runner path is denied
 a backslash-escaped runner path is denied
 an option-like quoted cwd is denied
