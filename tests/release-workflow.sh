@@ -211,6 +211,10 @@ PUBLISH_LINE=$(grep -nF -- "- name: Publish npm package" "$WORKFLOW" | cut -d: -
 check '[ -n "$CI_LINE" ] && [ "$CI_LINE" -lt "$TAG_LINE" ] &&
        [ "$TAG_LINE" -lt "$RELEASE_LINE" ] && [ "$RELEASE_LINE" -lt "$PUBLISH_LINE" ]' \
   "CI is proven before tag, GitHub release, and npm publication"
+IDENTITY_LINE=$(grep -nF -- "- name: Configure the tagging identity" "$WORKFLOW" | cut -d: -f1)
+check '[ -n "$IDENTITY_LINE" ] && [ "$IDENTITY_LINE" -lt "$TAG_LINE" ] &&
+       grep -q "git config user.name" "$WORKFLOW" && grep -q "git config user.email" "$WORKFLOW"' \
+  "a committer identity is configured before the annotated tag is created"
 
 printf '\n== CI-owned checks are not duplicated\n'
 check '! grep -Fq "claude plugin validate" "$WORKFLOW" &&
