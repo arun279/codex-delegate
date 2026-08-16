@@ -37,7 +37,7 @@ CODEX_PROGRAMS = frozenset(
     }
 )
 SERVER_PROGRAMS = CODEX_PROGRAMS - {"codex"}
-TURN_SUBCOMMANDS = frozenset({"exec", "review", "resume", "mcp", "mcp-server", "app-server", "proto"})
+TURN_SUBCOMMANDS = frozenset({"exec", "e", "exec-server", "review", "resume", "mcp", "mcp-server", "app-server", "proto"})
 VALID_SANDBOXES = frozenset({"read-only", "workspace-write", "danger-full-access"})
 WRAPPERS = frozenset({"caffeinate", "command", "env", "exec", "nice", "nohup", "setsid", "stdbuf", "sudo", "time"})
 SEPARATORS = frozenset({"\n", ";", ";;", "&", "&&", "|", "||", "|&", "(", ")", "{", "}"})
@@ -543,7 +543,7 @@ def _codex_starts(program: str, args: Sequence[Optional[str]]) -> bool:
         return False
     if _sandbox_is_invalid(option_args):
         return False
-    return not (subcommand == "exec" and "--ask-for-approval" in option_args[1:])
+    return not (subcommand in ("exec", "e") and "--ask-for-approval" in option_args[1:])
 
 
 def _split_wrapper(values: Sequence[Optional[str]], index: int, program: str) -> Optional[int]:

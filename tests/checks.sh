@@ -292,6 +292,10 @@ expect_guard allow "git log can search launcher history for the runner handoff f
   "git log -S --runner-handoff -- bin/codex-delegate"
 expect_guard allow "a comment can name the runner handoff flag beside a launcher path" "$GUARD_BASH" \
   "wc -l bin/codex-delegate agents/runner.md # --runner-handoff"
+expect_guard_denies "the exec alias starts a turn and is denied" "$GUARD_BASH" "codex e 'do something'"
+expect_guard_denies "the standalone exec-server subcommand is denied" "$GUARD_BASH" "codex exec-server"
+expect_guard allow "the exec alias with an approval prompt stays allowed like exec" "$GUARD_BASH" \
+  "codex e --ask-for-approval untrusted 'do something'"
 expect_guard deny "a quoted runner path is denied" "$GUARD_BASH" "$RUNNER_QUOTED_PATH"
 expect_guard deny "a backslash-escaped runner path is denied" "$GUARD_BASH" "$RUNNER_ESCAPED_PATH"
 expect_guard deny "an option-like quoted cwd is denied" "$GUARD_BASH" "$RUNNER_OPTION_PATH"
