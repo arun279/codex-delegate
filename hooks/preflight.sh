@@ -44,7 +44,6 @@ else
   # A watchdog in plain sh: the probe runs in the background against a temp file and is killed
   # after its bound, so a hung codex cannot stall SessionStart and no extra runtime is required.
   codex_version_status=125
-  codex_version_output=''
   codex_version_file=$(mktemp 2>/dev/null) || codex_version_file=''
   if [ -n "$codex_version_file" ]; then
     codex --version >"$codex_version_file" 2>/dev/null &

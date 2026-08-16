@@ -33,6 +33,8 @@ No version of this project has been published, so every entry below stays under 
 
 ### Changed
 
+- Simplified launcher and hook internals with identical observable behavior: the same verdicts, diagnostics, exit codes, and status fields.
+  <!-- evidence: tests/runner-handoff.sh :: "$name report is the launcher output without handoff records" -->
 - Capped the printed final-message section at a bounded, configurable byte budget while preserving complete artifacts and the full status block.
   <!-- evidence: tests/run.sh :: an over-budget final message prints the bounded head and exact omission marker -->
 - Reformatted the source to a 150-column line length with no behavioural change.

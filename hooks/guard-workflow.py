@@ -86,11 +86,6 @@ def _read_string(source: str, start: int, quote: str) -> tuple[int, str, bool] |
     return None
 
 
-def _skip_block_comment(source: str, start: int) -> int | None:
-    end = source.find("*/", start + 2)
-    return None if end < 0 else end + 2
-
-
 def _tokenize(source: str) -> list[Token] | None:
     tokens: list[Token] = []
     index = 0
@@ -102,10 +97,10 @@ def _tokenize(source: str) -> list[Token] | None:
             newline = source.find("\n", index + 2)
             index = len(source) if newline < 0 else newline + 1
         elif source.startswith("/*", index):
-            comment_end = _skip_block_comment(source, index)
-            if comment_end is None:
+            comment_end = source.find("*/", index + 2)
+            if comment_end < 0:
                 return None
-            index = comment_end
+            index = comment_end + 2
         elif char in "'\"":
             result = _read_string(source, index, char)
             if result is None:
@@ -313,9 +308,7 @@ def lint_script(source: str) -> list[Violation]:
             continue
         if index and (tokens[index - 1].value == "." or tokens[index - 1].value in ("function", "new")):
             continue
-        call_end = pairs.get(index + 1)
-        if call_end is None:
-            continue
+        call_end = pairs[index + 1]
         if call_end + 1 < len(tokens) and tokens[call_end + 1].value == "{":
             continue
         violation = _violation_for_call(source, tokens, index + 1, call_end, pairs)

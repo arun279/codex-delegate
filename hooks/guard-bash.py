@@ -397,8 +397,6 @@ def _strip_heredoc_bodies(command: str) -> Optional[Tuple[str, List[Heredoc]]]:
                 return None
             completed.append(Heredoc(header, "".join(body), bool(re.search(r"<<-?\s*['\"]", header))))
         index += 1
-    if not kept:
-        return None
     return "".join(kept), completed
 
 
@@ -583,7 +581,7 @@ def _unwrap(values: Sequence[Optional[str]]) -> Optional[Tuple[str, Sequence[Opt
     while index < len(values):
         value = values[index]
         name = _program_name(value)
-        if value is None or name is None:
+        if value is None:
             return None
         if name not in WRAPPERS:
             return value, values[index + 1 :]
@@ -687,12 +685,12 @@ def _python_starts(code: str, variables: Variables, staged: Dict[str, str], runn
         elif name in {"os.execl", "os.execlp"} and len(node.args) >= 2:
             program = _static_node_string(node.args[0])
             argv_values: List[Optional[str]] = [_static_node_string(item) for item in node.args[2:]]
-            if program is not None and _values_start([program, *argv_values], variables, staged, None, runner):
+            if _values_start([program, *argv_values], variables, staged, None, runner):
                 return True
         elif name in {"os.execv", "os.execvp"} and len(node.args) >= 2:
             program = _static_node_string(node.args[0])
             argv = _static_node_argv(node.args[1])
-            if program is not None and argv is not None and _values_start([program, *argv[1:]], variables, staged, None, runner):
+            if argv is not None and _values_start([program, *argv[1:]], variables, staged, None, runner):
                 return True
     return False
 
@@ -721,8 +719,7 @@ def _values_start(
 ) -> bool:
     if not values or values[0] is None:
         return False
-    first_name = _program_name(values[0])
-    if first_name == "env":
+    if _program_name(values[0]) == "env":
         for index, value in enumerate(values[1:], start=1):
             if value in ("-S", "--split-string") and index + 1 < len(values):
                 split = values[index + 1]
@@ -748,12 +745,10 @@ def _values_start(
         return False
     program, args = effective
     name = _program_name(program)
-    if runner and name == "codex-delegate":
-        return True
+    if name == "codex-delegate":
+        return runner
     if not runner and _codex_starts(program, args):
         return True
-    if name == "codex-delegate":
-        return False
     if program in staged and _scan_shell(staged[program], dict(variables), dict(staged), runner):
         return True
     if name in SHELLS:
@@ -964,8 +959,7 @@ def _inspect_simple(
         if simple.after not in ("|", "|&"):
             variables.update(assigned)
         return False
-    first = _resolve_word(words[0], local)
-    first_name = _program_name(first)
+    first_name = _program_name(_resolve_word(words[0], local))
     if first_name in {"declare", "export", "local", "readonly", "typeset"}:
         declarations: Dict[str, str] = {}
         for word in words[1:]:
@@ -982,11 +976,10 @@ def _inspect_simple(
         if operator == "<<<":
             value = _resolve_word(word, local)
             stdin_code = None if value is None else value + "\n"
-    if values and values[0] is not None and _values_start(values, local, staged, stdin_code, runner):
+    if _values_start(values, local, staged, stdin_code, runner):
         return True
-    host = _program_name(values[0] if values else None)
     for name, value in assigned.items():
-        if host in HOOK_COMMANDS.get(name, frozenset()) and _scan_shell(value, dict(local), dict(staged), runner):
+        if first_name in HOOK_COMMANDS.get(name, frozenset()) and _scan_shell(value, dict(local), dict(staged), runner):
             return True
     return False
 
@@ -999,7 +992,7 @@ def _heredoc_starts(heredoc: Heredoc, variables: Variables, staged: Dict[str, st
     for simple in commands:
         local, words, _ = _local_command(simple, variables)
         values = [_resolve_word(word, local) for word in words]
-        effective = _unwrap(values) if values else None
+        effective = _unwrap(values)
         if (
             effective is not None
             and _program_name(effective[0]) in SHELLS
@@ -1033,7 +1026,7 @@ def _runner_raw_matches(command: str) -> bool:
 def _runner_invocation(simple: SimpleCommand) -> bool:
     local, words, _ = _local_command(simple, {})
     values = [_resolve_word(word, local) for word in words]
-    effective = _unwrap(values) if values else None
+    effective = _unwrap(values)
     if effective is None or _program_name(effective[0]) != "codex-delegate":
         return False
     return "run" in effective[1] and "--runner-handoff" in effective[1]
@@ -1099,7 +1092,7 @@ def runner_kickoff_violation(command: str) -> Optional[str]:
         return "rule 1 (command separators, pipelines, and background operators are forbidden)"
     if len(simple.redirects) != 1 or simple.redirects[0][0] != "<<":
         return "rule 1 (the single quoted heredoc is the only allowed redirect)"
-    if not words or _resolve_word(words[0], {}) != "codex-delegate":
+    if _resolve_word(words[0], {}) != "codex-delegate":
         return "rule 1 (wrapper programs and alternate executable spellings are forbidden)"
     if len(heredocs) != 1:
         return "rule 3 (exactly one heredoc is required)"
