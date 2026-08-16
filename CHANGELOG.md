@@ -4,9 +4,11 @@
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-No version of this project has been published, so every entry below stays under Unreleased. Entries describe the shipped product surface a plugin or launcher user would notice, not the development machinery that produced it.
+Entries describe the shipped product surface a plugin or launcher user would notice, not the development machinery that produced it. A change stays under Unreleased until the release that ships it.
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-08-16
 
 ### Added
 
@@ -79,4 +81,5 @@ No version of this project has been published, so every entry below stays under 
 - Rejected `workspace-write` runs whose writable roots overlap the owner-only run store.
   <!-- evidence: tests/run.sh :: workspace-write cannot overlap launcher control state -->
 
-[Unreleased]: https://github.com/arun279/codex-delegate/commits/main
+[Unreleased]: https://github.com/arun279/codex-delegate/compare/v0.2.0...main
+[0.2.0]: https://github.com/arun279/codex-delegate/releases/tag/v0.2.0
