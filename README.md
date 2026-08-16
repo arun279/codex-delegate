@@ -1,6 +1,6 @@
 # codex-delegate
 
-Hand one coding task from Claude Code to the OpenAI Codex CLI and get the result back.
+Hand one coding task to the OpenAI Codex CLI and get the result back: from Claude Code through the bundled plugin, or from any terminal, script, or agent harness through the standalone launcher.
 
 The launcher starts `codex exec` in a private process group, reads its JSON event stream, enforces a wall-clock deadline, returns the final message, runs bounded teardown for that group, and publishes one status record that says whether the group went away. `INT`, `TERM`, and `HUP` stop that same run and start the same teardown. It holds an advisory lock on its `pid` artifact until exit, so the runner can wait on the original launcher without trusting a reused PID. There is no detached mode, job registry, or recovery command: a launcher killed outright leaves Codex running in its own session with nothing to reap it.
 
@@ -34,11 +34,11 @@ claude plugin update codex-delegate@arun279-plugins
 
 Restart Claude Code after updating so its cached skill and agent definitions refresh.
 
-Plugin installation and management require Claude Code. The standalone npm launcher described below does not.
+Plugin installation and management require Claude Code. The standalone launcher does not: install it alone with `npm install -g codex-delegate`, or run it without installing: `npx codex-delegate models`.
 
 ## npm package
 
-The Claude Code plugin is the product. The `codex-delegate` npm package exists so that name resolves to this project rather than to an unrelated publisher. Its tarball contains exactly `package.json`, `bin/codex-delegate`, and the license, README, privacy, security, and changelog documents. The `bin` entry exposes that launcher as the `codex-delegate` executable, so `npx codex-delegate models` and `npx codex-delegate run ...` provide only the standalone terminal CLI documented below. A bare `npx codex-delegate` prints the CLI usage error because a `run` or `models` subcommand is required. The package does not contain or install the Claude Code plugin files.
+The `codex-delegate` npm package delivers the standalone launcher for any caller on macOS: a script, a CI job on a macOS runner, another agent harness, or a person at a terminal. It requires no Claude Code. The tarball contains exactly `package.json`, `bin/codex-delegate`, and the license, README, privacy, security, and changelog documents, and the `bin` entry exposes the launcher as the `codex-delegate` executable, so `npx codex-delegate models` and `npx codex-delegate run ...` work without a separate install step. A bare `npx codex-delegate` prints the CLI usage error because a subcommand is required. The package does not contain or install the Claude Code plugin files, and publishing it also keeps the `codex-delegate` name resolving to this project.
 
 ## From Claude Code
 

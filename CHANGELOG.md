@@ -8,6 +8,13 @@ Entries describe the shipped product surface a plugin or launcher user would not
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-16
+
+### Changed
+
+- Described the launcher as one tool with two delivery channels: the Claude Code plugin wraps it, and the npm package delivers the terminal CLI to any macOS caller with no Claude Code required.
+  <!-- evidence: README.md :: delivers the standalone launcher for any caller -->
+
 ## [0.2.0] - 2026-08-16
 
 ### Added
@@ -81,5 +88,6 @@ Entries describe the shipped product surface a plugin or launcher user would not
 - Rejected `workspace-write` runs whose writable roots overlap the owner-only run store.
   <!-- evidence: tests/run.sh :: workspace-write cannot overlap launcher control state -->
 
-[Unreleased]: https://github.com/arun279/codex-delegate/compare/v0.2.0...main
+[Unreleased]: https://github.com/arun279/codex-delegate/compare/v0.2.1...main
+[0.2.1]: https://github.com/arun279/codex-delegate/releases/tag/v0.2.1
 [0.2.0]: https://github.com/arun279/codex-delegate/releases/tag/v0.2.0
