@@ -1,6 +1,6 @@
 {
   "name": "codex-delegate",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Run one Codex CLI task. Prompts and files are sent to OpenAI. Uses your ChatGPT Codex allowance or API-billed usage. Cleanup is bounded; surviving process groups report CLEANUP_FAILED. Requires macOS and a signed-in Codex CLI.",
   "author": {
     "name": "Arun Krishnamurthy",

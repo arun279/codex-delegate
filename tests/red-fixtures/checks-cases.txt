@@ -129,6 +129,10 @@ matching non-SemVer package and plugin versions are rejected
 release-tag validation also rejects matching non-SemVer versions
 SemVer prerelease identifiers are accepted
 SemVer build metadata identifiers are accepted
+a release without a version-matching changelog section is rejected
+a changelog section for a different version is rejected
+a rejected release does not publish a version output
+a release with a version-matching changelog section is accepted
 marketplace owner.name rejects hidden control characters
 package.json pins the account-funded usage disclosure
 .claude-plugin/plugin.json pins the account-funded usage disclosure

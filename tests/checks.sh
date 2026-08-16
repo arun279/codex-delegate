@@ -527,6 +527,14 @@ invalid_utf8_tripwire() {
     PYTHONIOENCODING=utf-8:strict python3 "$RELEASE_INVARIANTS" dynamic-eval
 }
 
+release_rejection_writes_nothing() {
+  local output=$WORK/rejected-release-output
+  rm -f "$output"
+  env RELEASE_TAG=v0.1.2 GITHUB_OUTPUT="$output" \
+    python3 "$RELEASE_ROOT/scripts/release-invariants.py" release-versions >/dev/null 2>&1
+  [ "$?" -eq 1 ] && [ ! -e "$output" ]
+}
+
 null_byte_tripwire() {
   printf 'x = 1\000\n' | python3 "$RELEASE_INVARIANTS" dynamic-eval
 }
@@ -1057,6 +1065,7 @@ cp "$ROOT/scripts/release-invariants.py" "$RELEASE_ROOT/scripts/release-invarian
 cp "$ROOT/.claude-plugin/marketplace.json" "$RELEASE_ROOT/.claude-plugin/marketplace.clean.json"
 cp "$ROOT/.claude-plugin/plugin.json" "$RELEASE_ROOT/.claude-plugin/plugin.json"
 cp "$ROOT/package.json" "$RELEASE_ROOT/package.json"
+printf '%s\n' '# Changelog' '' '## [Unreleased]' >"$RELEASE_ROOT/CHANGELOG.md"
 
 cp "$RELEASE_ROOT/.claude-plugin/marketplace.clean.json" \
   "$RELEASE_ROOT/.claude-plugin/marketplace.json"
@@ -1093,6 +1102,26 @@ mutate_json "$RELEASE_ROOT/.claude-plugin/plugin.json" version '"0.2.0+build.7"'
 expect_diagnostic 0 "version 0.2.0+build.7" \
   "SemVer build metadata identifiers are accepted" \
   python3 "$RELEASE_ROOT/scripts/release-invariants.py" versions
+
+mutate_json "$RELEASE_ROOT/package.json" version '"0.1.2"'
+mutate_json "$RELEASE_ROOT/.claude-plugin/plugin.json" version '"0.1.2"'
+expect_diagnostic 1 "CHANGELOG.md has no release section for plugin.json version 0.1.2" \
+  "a release without a version-matching changelog section is rejected" \
+  env RELEASE_TAG=v0.1.2 GITHUB_OUTPUT="$WORK/missing-heading-output" \
+  python3 "$RELEASE_ROOT/scripts/release-invariants.py" release-versions
+printf '%s\n' '' '## [0.1.1]' >>"$RELEASE_ROOT/CHANGELOG.md"
+expect_diagnostic 1 "CHANGELOG.md has no release section for plugin.json version 0.1.2" \
+  "a changelog section for a different version is rejected" \
+  env RELEASE_TAG=v0.1.2 GITHUB_OUTPUT="$WORK/wrong-heading-output" \
+  python3 "$RELEASE_ROOT/scripts/release-invariants.py" release-versions
+expect_silent_exit 0 \
+  "a rejected release does not publish a version output" \
+  release_rejection_writes_nothing
+printf '%s\n' '' '## [0.1.2]' >>"$RELEASE_ROOT/CHANGELOG.md"
+expect_diagnostic 0 "version 0.1.2 matches tag v0.1.2" \
+  "a release with a version-matching changelog section is accepted" \
+  env RELEASE_TAG=v0.1.2 GITHUB_OUTPUT="$WORK/matching-heading-output" \
+  python3 "$RELEASE_ROOT/scripts/release-invariants.py" release-versions
 
 cp "$RELEASE_ROOT/.claude-plugin/marketplace.clean.json" \
   "$RELEASE_ROOT/.claude-plugin/marketplace.json"

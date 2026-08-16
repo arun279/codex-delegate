@@ -349,6 +349,16 @@ def release_version_check() -> int:
     problems = version_problems(package_version, plugin_version)
     if not isinstance(plugin_version, str) or tag != f"v{plugin_version}":
         problems.append(f"tag {tag!r} does not match plugin.json version {plugin_version!r}")
+    if isinstance(plugin_version, str) and tag == f"v{plugin_version}":
+        changelog_path = ROOT / "CHANGELOG.md"
+        try:
+            changelog_lines = changelog_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as error:
+            problems.append(f"cannot read CHANGELOG.md: {error}")
+        else:
+            release_heading = re.compile(rf"## \[{re.escape(plugin_version)}](?: - \d{{4}}-\d{{2}}-\d{{2}})?")
+            if not any(release_heading.fullmatch(line) for line in changelog_lines):
+                problems.append(f"CHANGELOG.md has no release section for plugin.json version {plugin_version}")
     for problem in problems:
         print(problem)
     if problems:
@@ -503,7 +513,13 @@ def changelog_check() -> int:
                     if CHANGELOG_ENTRY.match(line) is not None
                 }
                 if not current_entries - prior_entries:
-                    problems.append(f"product surface changed without a new CHANGELOG.md entry (base {base})")
+                    prior_headings = {match.group(1) for line in prior if (match := re.fullmatch(r"## \[([^]]+)](?: - \d{4}-\d{2}-\d{2})?", line))}
+                    try:
+                        plugin_version = load_object(ROOT / ".claude-plugin" / "plugin.json").get("version")
+                    except (OSError, ValueError):
+                        plugin_version = None
+                    if plugin_version not in set(headings) - prior_headings:
+                        problems.append(f"product surface changed without a new CHANGELOG.md entry (base {base})")
         except subprocess.CalledProcessError as error:
             detail = error.stderr.strip() if isinstance(error.stderr, str) else ""
             problems.append(f"cannot inspect the product diff from {base!r}: {detail or error}")
