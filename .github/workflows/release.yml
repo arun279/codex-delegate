@@ -7,6 +7,10 @@ on:
         description: Version to publish; must match package.json and plugin.json
         required: true
         type: string
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
 
 concurrency:
   group: release
@@ -17,7 +21,7 @@ permissions:
 
 jobs:
   release:
-    if: github.repository == 'arun279/codex-delegate' && github.event.repository.fork == false && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.repository == 'arun279/codex-delegate' && github.event.repository.fork == false && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -28,7 +32,28 @@ jobs:
         with:
           fetch-depth: 0
 
+      # A version-bump merge releases itself once NPM_TOKEN exists; every other push is a no-op.
+      # The secrets context is unavailable in the job-level if, so the token presence check lives here.
+      - name: Decide whether this run releases
+        id: gate
+        env:
+          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+        run: |
+          proceed=true
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            version=$(python3 -c 'import json; print(json.load(open(".claude-plugin/plugin.json"))["version"])')
+            if [ "$HAS_TOKEN" != "true" ]; then
+              echo "NPM_TOKEN is not configured; automatic release stays off."
+              proceed=false
+            elif git ls-remote --exit-code --tags origin "refs/tags/codex-delegate--v${version}" >/dev/null; then
+              echo "codex-delegate--v${version} already exists; this push does not bump the version."
+              proceed=false
+            fi
+          fi
+          echo "proceed=$proceed" >>"$GITHUB_OUTPUT"
+
       - name: Require successful CI
+        if: steps.gate.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -47,12 +72,14 @@ jobs:
           echo "Push CI for ${GITHUB_SHA} completed successfully."
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.gate.outputs.proceed == 'true'
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - name: npm authentication
+        if: steps.gate.outputs.proceed == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -63,18 +90,35 @@ jobs:
 
       # Run the release-specific version agreement under the oldest supported Python.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.gate.outputs.proceed == 'true'
         with:
           python-version: "3.9"
 
       - run: npm install -g npm@11.5.1 @anthropic-ai/claude-code@2.1.220
+        if: steps.gate.outputs.proceed == 'true'
+
+      - name: Resolve requested version
+        if: steps.gate.outputs.proceed == 'true'
+        id: requested
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            version="$INPUT_VERSION"
+          else
+            version=$(python3 -c 'import json; print(json.load(open(".claude-plugin/plugin.json"))["version"])')
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
 
       - name: Version and tag agreement
+        if: steps.gate.outputs.proceed == 'true'
         id: version
         env:
-          RELEASE_TAG: v${{ inputs.version }}
+          RELEASE_TAG: v${{ steps.requested.outputs.version }}
         run: python3 scripts/release-invariants.py release-versions
 
       - name: Check npm publication state
+        if: steps.gate.outputs.proceed == 'true'
         id: registry
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
@@ -99,6 +143,7 @@ jobs:
           fi
 
       - name: Create and push plugin tag
+        if: steps.gate.outputs.proceed == 'true'
         env:
           PLUGIN_TAG: codex-delegate--v${{ steps.version.outputs.version }}
         run: |
@@ -132,6 +177,7 @@ jobs:
           fi
 
       - name: Create GitHub release
+        if: steps.gate.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PLUGIN_VERSION: ${{ steps.version.outputs.version }}
@@ -147,7 +193,7 @@ jobs:
           fi
 
       - name: Publish npm package
-        if: steps.registry.outputs.exists != 'true'
+        if: steps.gate.outputs.proceed == 'true' && steps.registry.outputs.exists != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public --provenance
